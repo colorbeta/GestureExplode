@@ -51,6 +51,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
@@ -78,8 +79,8 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【版本号更新为 66】 ---
-const val BUILD_VERSION = 66
+// --- 【版本号更新为 70】 ---
+const val BUILD_VERSION = 70
 
 enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
@@ -140,40 +141,61 @@ fun HighlightedText(text: String, query: String, initials: String, initialIndice
     Text(text = annotatedString, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = Color.White)
 }
 
-// 屏蔽高版本 API 警告，因为我们的目标机型已经是 Android 14
 @SuppressLint("InlinedApi")
 fun getSystemSettingsItems(): List<SearchItem> {
     val settings = listOf(
-        "WLAN" to Settings.ACTION_WIFI_SETTINGS,
+        // 🌐 网络与连接
+        "WLAN / 无线网络" to Settings.ACTION_WIFI_SETTINGS,
         "蓝牙设置" to Settings.ACTION_BLUETOOTH_SETTINGS,
-        "移动网络" to Settings.ACTION_NETWORK_OPERATOR_SETTINGS,
-        "数据使用" to Settings.ACTION_DATA_USAGE_SETTINGS,
-        "NFC 设置" to Settings.ACTION_NFC_SETTINGS,
+        "移动网络 / 蜂窝" to Settings.ACTION_NETWORK_OPERATOR_SETTINGS,
+        "数据使用 / 流量管理" to Settings.ACTION_DATA_USAGE_SETTINGS,
+        "个人热点 / 共享" to Settings.ACTION_WIRELESS_SETTINGS,
+        "NFC / 触碰付款" to Settings.ACTION_NFC_SETTINGS,
         "飞行模式" to Settings.ACTION_AIRPLANE_MODE_SETTINGS,
-        "投屏设置" to Settings.ACTION_CAST_SETTINGS,
+        "投屏 / 多屏互动" to Settings.ACTION_CAST_SETTINGS,
         "VPN 设置" to Settings.ACTION_VPN_SETTINGS,
-        "显示设置" to Settings.ACTION_DISPLAY_SETTINGS,
-        "声音振动" to Settings.ACTION_SOUND_SETTINGS,
-        "壁纸设置" to Intent.ACTION_SET_WALLPAPER,
-        "日期时间" to Settings.ACTION_DATE_SETTINGS,
-        "语言输入" to Settings.ACTION_INPUT_METHOD_SETTINGS,
-        "位置信息" to Settings.ACTION_LOCATION_SOURCE_SETTINGS,
-        "安全设置" to Settings.ACTION_SECURITY_SETTINGS,
-        "隐私设置" to Settings.ACTION_PRIVACY_SETTINGS,
-        "生物识别" to Settings.ACTION_BIOMETRIC_ENROLL,
-        "锁屏设置" to "android.settings.LOCK_SCREEN_SETTINGS",
-        "应用管理" to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
-        "默认应用" to Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
-        "存储设置" to Settings.ACTION_INTERNAL_STORAGE_SETTINGS,
-        "账号同步" to Settings.ACTION_SYNC_SETTINGS,
-        "关于手机" to Settings.ACTION_DEVICE_INFO_SETTINGS,
-        "系统更新" to "android.settings.SYSTEM_UPDATE_SETTINGS",
+
+        // 👁️ 个人与显示
+        "显示与亮度 / 屏幕" to Settings.ACTION_DISPLAY_SETTINGS,
+        "深色模式 / 护眼" to Settings.ACTION_NIGHT_DISPLAY_SETTINGS,
+        "声音与振动 / 音量" to Settings.ACTION_SOUND_SETTINGS,
+        "壁纸与个性化" to Intent.ACTION_SET_WALLPAPER,
+        "日期和时间" to Settings.ACTION_DATE_SETTINGS,
+        "语言与地区" to Settings.ACTION_LOCALE_SETTINGS,
+        "输入法与键盘" to Settings.ACTION_INPUT_METHOD_SETTINGS,
+
+        // 🛡️ 隐私与安全
+        "位置信息 / 定位" to Settings.ACTION_LOCATION_SOURCE_SETTINGS,
+        "密码与安全 / 隐私" to Settings.ACTION_SECURITY_SETTINGS,
+        "生物识别 / 指纹面部" to Settings.ACTION_BIOMETRIC_ENROLL,
+        "锁屏与息屏" to "android.settings.LOCK_SCREEN_SETTINGS",
+
+        // 📦 应用与权限
+        "应用管理 / 列表" to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
+        "默认应用设置" to Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
+        "通知管理 / 状态栏" to Settings.ACTION_ALL_APPS_NOTIFICATION_SETTINGS,
+        "悬浮窗权限" to Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+        "未知来源安装" to Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+        // 【修复点：使用底层字符串常量强制调用】
+        "画中画权限" to "android.settings.PICTURE_IN_PICTURE_SETTINGS",
+        "后台运行 / 优化限制" to Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+
+        // ⚙️ 系统与存储
+        "存储空间 / 内存" to Settings.ACTION_INTERNAL_STORAGE_SETTINGS,
+        "账号与同步" to Settings.ACTION_SYNC_SETTINGS,
+        "关于手机 / 设备信息" to Settings.ACTION_DEVICE_INFO_SETTINGS,
+        "系统更新 / 软件升级" to "android.settings.SYSTEM_UPDATE_SETTINGS",
         "开发者选项" to Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
-        "电池信息" to Intent.ACTION_POWER_USAGE_SUMMARY,
-        "省电模式" to Settings.ACTION_BATTERY_SAVER_SETTINGS,
-        "无障碍" to Settings.ACTION_ACCESSIBILITY_SETTINGS,
+        "电池与省电" to Settings.ACTION_BATTERY_SAVER_SETTINGS,
+        "耗电详情 / 电量" to Intent.ACTION_POWER_USAGE_SUMMARY,
+
+        // 🛠️ 辅助与特色功能
+        "无障碍 / 辅助功能" to Settings.ACTION_ACCESSIBILITY_SETTINGS,
         "搜索设置" to Settings.ACTION_SEARCH_SETTINGS,
-        "勿扰模式" to Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS
+        "勿扰模式" to Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS,
+        "默认桌面 / 主屏幕" to Settings.ACTION_HOME_SETTINGS,
+        // 【修复点：使用底层字符串常量强制调用】
+        "单手操作模式" to "android.settings.action.ONE_HANDED_SETTINGS"
     )
 
     return settings.map { (name, action) ->
@@ -249,6 +271,7 @@ fun GestureSearchApp() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val uriHandler = LocalUriHandler.current
     val prefs = remember { context.getSharedPreferences("gesture_prefs", Context.MODE_PRIVATE) }
 
     val listState = rememberLazyListState()
@@ -313,12 +336,16 @@ fun GestureSearchApp() {
     }
 
     val recognizer = remember {
-        val m = DigitalInkRecognitionModel.builder(DigitalInkRecognitionModelIdentifier.fromLanguageTag("en")!!).build()
+        val currentLanguage = Locale.getDefault().language
+        val modelTag = if (currentLanguage == "zh") "zh" else "en"
+        val m = DigitalInkRecognitionModel.builder(DigitalInkRecognitionModelIdentifier.fromLanguageTag(modelTag)!!).build()
         DigitalInkRecognition.getClient(DigitalInkRecognizerOptions.builder(m).build())
     }
 
     LaunchedEffect(Unit) {
-        val m = DigitalInkRecognitionModel.builder(DigitalInkRecognitionModelIdentifier.fromLanguageTag("en")!!).build()
+        val currentLanguage = Locale.getDefault().language
+        val modelTag = if (currentLanguage == "zh") "zh" else "en"
+        val m = DigitalInkRecognitionModel.builder(DigitalInkRecognitionModelIdentifier.fromLanguageTag(modelTag)!!).build()
         RemoteModelManager.getInstance().download(m, DownloadConditions.Builder().build()).addOnSuccessListener { isReady = true }
     }
 
@@ -382,12 +409,30 @@ fun GestureSearchApp() {
                         }
                     }
                 }
-                Text(
-                    text = "Gesture Explode v$BUILD_VERSION",
-                    color = Color.Gray.copy(alpha = 0.3f),
-                    fontSize = 12.sp,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp).wrapContentWidth(Alignment.CenterHorizontally)
-                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { uriHandler.openUri("https://github.com/colorbeta/GestureExplode") }
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.github),
+                        contentDescription = "GitHub Repository",
+                        tint = Color.Gray.copy(alpha = 0.5f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "Gesture Explode v$BUILD_VERSION",
+                        color = Color.Gray.copy(alpha = 0.5f),
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
     } else {
@@ -404,7 +449,6 @@ fun GestureSearchApp() {
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    // 【上帝视角】：只偷窥触摸坐标，绝不打断物理滑动
                     .pointerInput(Unit) {
                         awaitPointerEventScope {
                             while (true) {
@@ -421,7 +465,6 @@ fun GestureSearchApp() {
                 val trackHeightPx = with(density) { maxHeight.toPx() }
                 val offsetXShift = trackWidthPx * 0.15f
 
-                // --- 底层：原生 LazyColumn 完全接管滑动 ---
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 140.dp)) {
                     itemsIndexed(filteredItems) { _, item ->
                         Card(
@@ -447,7 +490,6 @@ fun GestureSearchApp() {
                     }
                 }
 
-                // --- 中层：画板 ---
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     for (path in paths) drawPath(path, Color(0xFFFFEB3B), style = Stroke(15f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                     if (currentPath.isNotEmpty()) {
@@ -456,12 +498,9 @@ fun GestureSearchApp() {
                     }
                 }
 
-                // --- 顶层：结界 ---
                 Row(modifier = Modifier.fillMaxSize()) {
-                    // 左侧虚空，完全透传触摸给底层
                     Spacer(modifier = Modifier.weight(0.15f).fillMaxHeight())
 
-                    // 中间手写区
                     Box(modifier = Modifier
                         .weight(0.70f)
                         .fillMaxHeight()
@@ -550,11 +589,9 @@ fun GestureSearchApp() {
                         }
                     )
 
-                    // 右侧虚空，透传滑动
                     Spacer(modifier = Modifier.weight(0.15f).fillMaxHeight())
                 }
 
-                // --- 幽灵滑块 ---
                 if (listState.isScrollInProgress) {
                     val totalItems = filteredItems.size
                     val visibleItemsInfo = listState.layoutInfo.visibleItemsInfo
