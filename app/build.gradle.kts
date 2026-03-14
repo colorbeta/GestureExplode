@@ -57,7 +57,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     implementation("com.belerweb:pinyin4j:2.5.1")
-
-    // 保持 19.0.0 不变，它的底层 .so 库已经做好了 16KB 对齐
-    implementation("com.google.mlkit:digital-ink-recognition:18.1.0")
+    implementation("com.google.mlkit:digital-ink-recognition:19.0.0")
 }
