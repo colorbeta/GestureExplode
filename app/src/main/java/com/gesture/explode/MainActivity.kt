@@ -1,9 +1,9 @@
 package com.gesture.explode
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -46,11 +47,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
@@ -60,9 +60,11 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.vision.digitalink.*
@@ -76,8 +78,8 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【版本号更新为 54】 ---
-const val BUILD_VERSION = 54
+// --- 【版本号更新为 66】 ---
+const val BUILD_VERSION = 66
 
 enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
@@ -98,7 +100,7 @@ fun getSearchInitialsInfo(text: String): Pair<String, List<Int>> {
     for (i in text.indices) {
         val c = text[i]
         val pinyinArray: Array<String>? = PinyinHelper.toHanyuPinyinStringArray(c)
-        if (pinyinArray != null && pinyinArray.isNotEmpty()) {
+        if (!pinyinArray.isNullOrEmpty()) {
             initials.append(pinyinArray[0][0]); indices.add(i); isNewWord = false
         } else if (c.isLetterOrDigit()) {
             if (isNewWord) { initials.append(c.lowercaseChar()); indices.add(i); isNewWord = false }
@@ -127,7 +129,7 @@ fun HighlightedText(text: String, query: String, initials: String, initialIndice
                     val matchedIndicesSet = mutableSetOf<Int>()
                     for (i in lowerQ.indices) { matchedIndicesSet.add(initialIndices[acronymIdx + i]) }
                     for (i in text.indices) {
-                        if (matchedIndicesSet.contains(i)) withStyle(matchStyle) { append(text[i]) }
+                        if (i in matchedIndicesSet) withStyle(matchStyle) { append(text[i]) }
                         else withStyle(dimStyle) { append(text[i]) }
                     }
                 }
@@ -138,22 +140,45 @@ fun HighlightedText(text: String, query: String, initials: String, initialIndice
     Text(text = annotatedString, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = Color.White)
 }
 
+// 屏蔽高版本 API 警告，因为我们的目标机型已经是 Android 14
+@SuppressLint("InlinedApi")
 fun getSystemSettingsItems(): List<SearchItem> {
     val settings = listOf(
-        "开发者选项" to Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
         "WLAN" to Settings.ACTION_WIFI_SETTINGS,
         "蓝牙设置" to Settings.ACTION_BLUETOOTH_SETTINGS,
+        "移动网络" to Settings.ACTION_NETWORK_OPERATOR_SETTINGS,
+        "数据使用" to Settings.ACTION_DATA_USAGE_SETTINGS,
+        "NFC 设置" to Settings.ACTION_NFC_SETTINGS,
+        "飞行模式" to Settings.ACTION_AIRPLANE_MODE_SETTINGS,
+        "投屏设置" to Settings.ACTION_CAST_SETTINGS,
+        "VPN 设置" to Settings.ACTION_VPN_SETTINGS,
         "显示设置" to Settings.ACTION_DISPLAY_SETTINGS,
-        "电池信息" to Intent.ACTION_POWER_USAGE_SUMMARY,
-        "应用管理" to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
-        "无障碍" to Settings.ACTION_ACCESSIBILITY_SETTINGS,
+        "声音振动" to Settings.ACTION_SOUND_SETTINGS,
+        "壁纸设置" to Intent.ACTION_SET_WALLPAPER,
+        "日期时间" to Settings.ACTION_DATE_SETTINGS,
+        "语言输入" to Settings.ACTION_INPUT_METHOD_SETTINGS,
         "位置信息" to Settings.ACTION_LOCATION_SOURCE_SETTINGS,
+        "安全设置" to Settings.ACTION_SECURITY_SETTINGS,
+        "隐私设置" to Settings.ACTION_PRIVACY_SETTINGS,
+        "生物识别" to Settings.ACTION_BIOMETRIC_ENROLL,
+        "锁屏设置" to "android.settings.LOCK_SCREEN_SETTINGS",
+        "应用管理" to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
+        "默认应用" to Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
+        "存储设置" to Settings.ACTION_INTERNAL_STORAGE_SETTINGS,
+        "账号同步" to Settings.ACTION_SYNC_SETTINGS,
         "关于手机" to Settings.ACTION_DEVICE_INFO_SETTINGS,
-        "存储设置" to Settings.ACTION_INTERNAL_STORAGE_SETTINGS
+        "系统更新" to "android.settings.SYSTEM_UPDATE_SETTINGS",
+        "开发者选项" to Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+        "电池信息" to Intent.ACTION_POWER_USAGE_SUMMARY,
+        "省电模式" to Settings.ACTION_BATTERY_SAVER_SETTINGS,
+        "无障碍" to Settings.ACTION_ACCESSIBILITY_SETTINGS,
+        "搜索设置" to Settings.ACTION_SEARCH_SETTINGS,
+        "勿扰模式" to Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS
     )
+
     return settings.map { (name, action) ->
         val (initials, indices) = getSearchInitialsInfo(name)
-        SearchItem(name, "Setting", initials, indices, action, SearchItemType.SYSTEM_ACTION)
+        SearchItem(name, "System Setting", initials, indices, action, SearchItemType.SYSTEM_ACTION)
     }
 }
 
@@ -197,7 +222,7 @@ fun AppIcon(packageName: String, modifier: Modifier = Modifier) {
             try {
                 val drawable = context.packageManager.getApplicationIcon(packageName)
                 imageBitmap = drawable.toBitmap(120, 120).asImageBitmap()
-            } catch (e: Exception) { }
+            } catch (_: Exception) { }
         }
     }
     if (imageBitmap != null) Image(bitmap = imageBitmap!!, contentDescription = null, modifier = modifier)
@@ -218,7 +243,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun GestureSearchApp() {
     val context = LocalContext.current
@@ -231,23 +256,34 @@ fun GestureSearchApp() {
     var isReady by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
 
-    // 输入自动置顶
+    val paths = remember { mutableStateListOf<Path>() }
+    val currentPath = remember { mutableStateListOf<Offset>() }
+    var inkBuilder by remember { mutableStateOf(Ink.builder()) }
+    var strokeBuilder: Ink.Stroke.Builder? by remember { mutableStateOf(null) }
+    var recognizeJob by remember { mutableStateOf<Job?>(null) }
+
     LaunchedEffect(searchQuery) { listState.scrollToItem(0) }
 
     var searchAppsEnabled by remember { mutableStateOf(prefs.getBoolean("search_apps", true)) }
     var searchContactsEnabled by remember { mutableStateOf(prefs.getBoolean("search_contacts", true)) }
     var searchSettingsEnabled by remember { mutableStateOf(prefs.getBoolean("search_settings", true)) }
-    var writingSpeedDelay by remember { mutableStateOf(prefs.getLong("writing_delay", 500L)) }
+    var writingSpeedDelay by remember { mutableLongStateOf(prefs.getLong("writing_delay", 500L)) }
 
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) searchQuery = "" }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                searchQuery = ""
+                paths.clear()
+                currentPath.clear()
+                inkBuilder = Ink.builder()
+                recognizeJob?.cancel()
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
-    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
 
     var hasContactPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED)
@@ -262,16 +298,18 @@ fun GestureSearchApp() {
     val allItems = remember(allApps, allContacts, allSystemSettings, searchAppsEnabled, searchContactsEnabled, searchSettingsEnabled) {
         val list = mutableListOf<SearchItem>()
         if (searchAppsEnabled) list.addAll(allApps.filter { it.type == SearchItemType.APP })
-        if (searchSettingsEnabled) { list.addAll(allApps.filter { it.type == SearchItemType.SETTINGS }); list.addAll(allSystemSettings) }
+        if (searchSettingsEnabled) {
+            list.addAll(allApps.filter { it.type == SearchItemType.SETTINGS })
+            list.addAll(allSystemSettings)
+        }
         if (searchContactsEnabled) list.addAll(allContacts)
         list.sortedBy { it.title.lowercase() }
     }
 
     val filteredItems = remember(searchQuery, allItems) {
-        if (searchQuery.isEmpty()) allItems else {
-            val q = searchQuery.lowercase(Locale.getDefault())
-            allItems.filter { it.title.lowercase().contains(q) || it.initials.contains(q) }
-        }
+        if (searchQuery.isEmpty()) return@remember allItems
+        val q = searchQuery.lowercase(Locale.getDefault())
+        allItems.filter { it.title.lowercase().contains(q) || it.initials.contains(q) }
     }
 
     val recognizer = remember {
@@ -286,6 +324,21 @@ fun GestureSearchApp() {
 
     BackHandler(enabled = showSettings) { showSettings = false }
 
+    val onItemClick: (SearchItem) -> Unit = { item ->
+        try {
+            val intent = when (item.type) {
+                SearchItemType.APP -> context.packageManager.getLaunchIntentForPackage(item.launchData)
+                SearchItemType.SETTINGS, SearchItemType.SYSTEM_ACTION -> Intent(item.launchData)
+                SearchItemType.CONTACT -> Intent(Intent.ACTION_VIEW).apply { data = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, item.contactId) }
+            }
+            intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            intent?.let {
+                context.startActivity(it)
+                searchQuery = ""
+            }
+        } catch (_: Exception) { }
+    }
+
     if (showSettings) {
         Scaffold(
             containerColor = Color(0xFF121212),
@@ -297,34 +350,44 @@ fun GestureSearchApp() {
                 )
             }
         ) { innerPadding ->
-            LazyColumn(modifier = Modifier.padding(innerPadding).padding(horizontal = 16.dp)) {
-                item {
-                    Text(text = "搜索范围", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp))
-                    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
-                        Column {
-                            SettingM3Row("联系人", Icons.Default.Phone, searchContactsEnabled) { searchContactsEnabled = it; prefs.edit().putBoolean("search_contacts", it).apply() }
-                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
-                            SettingM3Row("应用软件", Icons.Default.Face, searchAppsEnabled) { searchAppsEnabled = it; prefs.edit().putBoolean("search_apps", it).apply() }
-                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
-                            SettingM3Row("系统设置", Icons.Default.Settings, searchSettingsEnabled) { searchSettingsEnabled = it; prefs.edit().putBoolean("search_settings", it).apply() }
+            Column(
+                modifier = Modifier.padding(innerPadding).fillMaxSize()
+            ) {
+                LazyColumn(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
+                    item {
+                        Text(text = "搜索范围", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp))
+                        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
+                            Column {
+                                SettingM3Row("联系人", Icons.Default.Phone, searchContactsEnabled) { searchContactsEnabled = it; prefs.edit { putBoolean("search_contacts", it) } }
+                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
+                                SettingM3Row("应用软件", Icons.Default.Face, searchAppsEnabled) { searchAppsEnabled = it; prefs.edit { putBoolean("search_apps", it) } }
+                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
+                                SettingM3Row("系统设置", Icons.Default.Settings, searchSettingsEnabled) { searchSettingsEnabled = it; prefs.edit { putBoolean("search_settings", it) } }
+                            }
                         }
                     }
-                }
-                item {
-                    Text(text = "写入速度", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 24.dp, bottom = 8.dp))
-                    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
-                        Column(Modifier.selectableGroup()) {
-                            val speedOptions = listOf("快 (300ms)" to 300L, "中等 (500ms)" to 500L, "慢 (800ms)" to 800L)
-                            speedOptions.forEach { option ->
-                                Row(Modifier.fillMaxWidth().height(56.dp).selectable(selected = (writingSpeedDelay == option.second), onClick = { writingSpeedDelay = option.second; prefs.edit().putLong("writing_delay", option.second).apply() }, role = Role.RadioButton).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    RadioButton(selected = (writingSpeedDelay == option.second), onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00BCD4)))
-                                    Text(text = option.first, color = Color.White, modifier = Modifier.padding(start = 16.dp))
+                    item {
+                        Text(text = "写入速度", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 24.dp, bottom = 8.dp))
+                        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
+                            Column(Modifier.selectableGroup()) {
+                                val speedOptions = listOf("快 (300ms)" to 300L, "中等 (500ms)" to 500L, "慢 (800ms)" to 800L)
+                                speedOptions.forEach { option ->
+                                    Row(Modifier.fillMaxWidth().height(56.dp).selectable(selected = (writingSpeedDelay == option.second), onClick = { writingSpeedDelay = option.second; prefs.edit { putLong("writing_delay", option.second) } }, role = Role.RadioButton).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(selected = (writingSpeedDelay == option.second), onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00BCD4)))
+                                        Text(text = option.first, color = Color.White, modifier = Modifier.padding(start = 16.dp))
+                                    }
+                                    if (option != speedOptions.last()) HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
                                 }
-                                if (option != speedOptions.last()) HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
                             }
                         }
                     }
                 }
+                Text(
+                    text = "Gesture Explode v$BUILD_VERSION",
+                    color = Color.Gray.copy(alpha = 0.3f),
+                    fontSize = 12.sp,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp).wrapContentWidth(Alignment.CenterHorizontally)
+                )
             }
         }
     } else {
@@ -335,16 +398,41 @@ fun GestureSearchApp() {
                 Spacer(Modifier.weight(1f)); IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = if (isReady) Color.White else Color.Gray) }
             }
 
-            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                val paths = remember { mutableStateListOf<Path>() }
-                val currentPath = remember { mutableStateListOf<Offset>() }
-                var inkBuilder by remember { mutableStateOf(Ink.builder()) }
-                var strokeBuilder: Ink.Stroke.Builder? by remember { mutableStateOf(null) }
-                var recognizeJob by remember { mutableStateOf<Job?>(null) }
+            var isScrollingLeft by remember { mutableStateOf(false) }
 
+            BoxWithConstraints(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    // 【上帝视角】：只偷窥触摸坐标，绝不打断物理滑动
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val change = event.changes.firstOrNull()
+                                if (change != null && change.pressed && !change.previousPressed) {
+                                    isScrollingLeft = change.position.x < size.width * 0.5f
+                                }
+                            }
+                        }
+                    }
+            ) {
+                val trackWidthPx = with(density) { maxWidth.toPx() }
+                val trackHeightPx = with(density) { maxHeight.toPx() }
+                val offsetXShift = trackWidthPx * 0.15f
+
+                // --- 底层：原生 LazyColumn 完全接管滑动 ---
                 LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 140.dp)) {
                     itemsIndexed(filteredItems) { _, item ->
-                        Card(modifier = Modifier.fillMaxWidth().height(88.dp).padding(horizontal = 12.dp, vertical = 6.dp), shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(88.dp)
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(28.dp))
+                                .clickable { onItemClick(item) },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                        ) {
                             Row(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(44.dp), Alignment.Center) {
                                     when (item.type) {
@@ -359,71 +447,8 @@ fun GestureSearchApp() {
                     }
                 }
 
-                Canvas(modifier = Modifier.fillMaxSize()
-                    .pointerInput(isReady, filteredItems) { detectTapGestures { offset ->
-                        if (offset.x > screenWidthPx * 0.90f) return@detectTapGestures
-
-                        // --- 【核心修复】：根据像素位置寻找真正对应的列表项 ---
-                        val tappedItem = listState.layoutInfo.visibleItemsInfo.find { itemInfo ->
-                            offset.y.toInt() in itemInfo.offset .. (itemInfo.offset + itemInfo.size)
-                        }
-
-                        tappedItem?.let { itemInfo ->
-                            if (itemInfo.index < filteredItems.size) {
-                                val item = filteredItems[itemInfo.index]
-                                try {
-                                    val intent = when (item.type) {
-                                        SearchItemType.APP -> context.packageManager.getLaunchIntentForPackage(item.launchData)
-                                        SearchItemType.SETTINGS, SearchItemType.SYSTEM_ACTION -> Intent(item.launchData)
-                                        SearchItemType.CONTACT -> Intent(Intent.ACTION_VIEW).apply { data = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, item.contactId) }
-                                    }
-                                    intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); intent?.let { context.startActivity(it); searchQuery = "" }
-                                } catch (e: Exception) { }
-                            }
-                        }
-                    } }
-                    .pointerInput(isReady) {
-                        detectDragGestures(
-                            onDragStart = { offset ->
-                                if (offset.x > screenWidthPx * 0.90f) return@detectDragGestures
-                                recognizeJob?.cancel(); currentPath.clear();
-                                strokeBuilder = Ink.Stroke.builder().apply { addPoint(Ink.Point.create(offset.x, offset.y, System.currentTimeMillis())) }
-                            },
-                            onDrag = { change, _ ->
-                                if (change.position.x > screenWidthPx * 0.90f) return@detectDragGestures
-                                currentPath.add(change.position)
-                                strokeBuilder?.addPoint(Ink.Point.create(change.position.x, change.position.y, System.currentTimeMillis()))
-                            },
-                            onDragEnd = {
-                                if (currentPath.isNotEmpty()) {
-                                    val p = Path().apply { moveTo(currentPath.first().x, currentPath.first().y); for (i in 1 until currentPath.size) lineTo(currentPath[i].x, currentPath[i].y) }
-                                    paths.add(p); strokeBuilder?.let { inkBuilder.addStroke(it.build()) }
-                                }
-                                if (currentPath.isNotEmpty()) {
-                                    val dx = currentPath.last().x - currentPath.first().x
-                                    val dy = currentPath.last().y - currentPath.first().y
-                                    if (dx < -80f && abs(dx) > abs(dy)) {
-                                        if (dx < -250f && abs(dx) > abs(dy) * 2f) { if (searchQuery.isNotEmpty()) searchQuery = searchQuery.dropLast(1) }
-                                        paths.clear(); inkBuilder = Ink.builder(); currentPath.clear()
-                                        recognizeJob?.cancel(); return@detectDragGestures
-                                    }
-                                }
-                                currentPath.clear()
-                                recognizeJob = coroutineScope.launch {
-                                    delay(writingSpeedDelay)
-                                    val finalInk = inkBuilder.build(); inkBuilder = Ink.builder(); paths.clear()
-                                    if (finalInk.strokes.isNotEmpty()) {
-                                        recognizer.recognize(finalInk).addOnSuccessListener { result ->
-                                            for (c in result.candidates.take(10)) {
-                                                val t = c.text.trim(); if (t.isNotEmpty() && t[0].isLetter()) { searchQuery += t[0].toString().lowercase(); break }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        )
-                    }
-                ) {
+                // --- 中层：画板 ---
+                Canvas(modifier = Modifier.fillMaxSize()) {
                     for (path in paths) drawPath(path, Color(0xFFFFEB3B), style = Stroke(15f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                     if (currentPath.isNotEmpty()) {
                         val p = Path().apply { moveTo(currentPath.first().x, currentPath.first().y); for (i in 1 until currentPath.size) lineTo(currentPath[i].x, currentPath[i].y) }
@@ -431,42 +456,129 @@ fun GestureSearchApp() {
                     }
                 }
 
-                // 悬浮滚动条层
-                BoxWithConstraints(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .width(56.dp)
-                        .padding(top = 10.dp, bottom = 150.dp, end = 16.dp)
-                ) {
-                    val trackHeightPx = this.constraints.maxHeight.toFloat()
-                    val totalItems = filteredItems.size
-                    val visibleItems = listState.layoutInfo.visibleItemsInfo.size
+                // --- 顶层：结界 ---
+                Row(modifier = Modifier.fillMaxSize()) {
+                    // 左侧虚空，完全透传触摸给底层
+                    Spacer(modifier = Modifier.weight(0.15f).fillMaxHeight())
 
-                    if (totalItems > visibleItems && totalItems > 0) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(filteredItems) {
-                                    detectDragGestures { _, dragAmount ->
-                                        // 使用像素分发，解决卡顿
-                                        val totalPx = totalItems * 96.dp.toPx()
-                                        val delta = (dragAmount.y / trackHeightPx) * totalPx
-                                        listState.dispatchRawDelta(delta)
+                    // 中间手写区
+                    Box(modifier = Modifier
+                        .weight(0.70f)
+                        .fillMaxHeight()
+                        .pointerInput(isReady, filteredItems) {
+                            detectTapGestures { offset ->
+                                val tappedItem = listState.layoutInfo.visibleItemsInfo.find { itemInfo ->
+                                    offset.y.toInt() in itemInfo.offset until (itemInfo.offset + itemInfo.size)
+                                }
+                                tappedItem?.let { itemInfo ->
+                                    if (itemInfo.index in filteredItems.indices) {
+                                        onItemClick(filteredItems[itemInfo.index])
                                     }
+                                }
+                            }
+                        }
+                        .pointerInput(isReady) {
+                            detectDragGestures(
+                                onDragStart = { offset ->
+                                    recognizeJob?.cancel()
+                                    currentPath.clear()
+                                    strokeBuilder = Ink.Stroke.builder().apply { addPoint(Ink.Point.create(offset.x + offsetXShift, offset.y, System.currentTimeMillis())) }
                                 },
-                            contentAlignment = Alignment.TopCenter
-                        ) {
-                            val thumbHeight = (trackHeightPx * (visibleItems.toFloat() / totalItems)).coerceIn(80f, trackHeightPx)
-                            val scrollOffset = (trackHeightPx - thumbHeight) * (listState.firstVisibleItemIndex.toFloat() / (totalItems - visibleItems).coerceAtLeast(1))
+                                onDragCancel = {
+                                    recognizeJob?.cancel()
+                                    currentPath.clear()
+                                    paths.clear()
+                                    inkBuilder = Ink.builder()
+                                },
+                                onDrag = { change, _ ->
+                                    val timeOffset = System.currentTimeMillis() - change.uptimeMillis
+                                    change.historical.forEach { hist ->
+                                        currentPath.add(Offset(hist.position.x + offsetXShift, hist.position.y))
+                                        strokeBuilder?.addPoint(Ink.Point.create(hist.position.x + offsetXShift, hist.position.y, hist.uptimeMillis + timeOffset))
+                                    }
+                                    currentPath.add(Offset(change.position.x + offsetXShift, change.position.y))
+                                    strokeBuilder?.addPoint(Ink.Point.create(change.position.x + offsetXShift, change.position.y, change.uptimeMillis + timeOffset))
+                                },
+                                onDragEnd = {
+                                    if (currentPath.isNotEmpty()) {
+                                        val p = Path().apply { moveTo(currentPath.first().x, currentPath.first().y); for (i in 1 until currentPath.size) lineTo(currentPath[i].x, currentPath[i].y) }
+                                        paths.add(p); strokeBuilder?.let { inkBuilder.addStroke(it.build()) }
+                                    }
+                                    if (currentPath.isNotEmpty()) {
+                                        val dx = currentPath.last().x - currentPath.first().x
+                                        val dy = currentPath.last().y - currentPath.first().y
 
-                            Box(
-                                modifier = Modifier
-                                    .width(12.dp)
-                                    .height(with(density) { thumbHeight.toDp() })
-                                    .offset(y = with(density) { scrollOffset.toDp() })
-                                    .background(Color(0xFFFFEB3B).copy(alpha = 0.3f), CircleShape)
+                                        if (dx < -200f && abs(dx) > abs(dy) * 1.5f) {
+                                            if (searchQuery.isNotEmpty()) searchQuery = searchQuery.dropLast(1)
+                                            paths.clear(); inkBuilder = Ink.builder(); currentPath.clear()
+                                            recognizeJob?.cancel(); return@detectDragGestures
+                                        }
+                                    }
+                                    currentPath.clear()
+                                    recognizeJob = coroutineScope.launch {
+                                        delay(writingSpeedDelay)
+                                        val finalInk = inkBuilder.build(); inkBuilder = Ink.builder(); paths.clear()
+                                        if (finalInk.strokes.isNotEmpty()) {
+                                            recognizer.recognize(finalInk).addOnSuccessListener { result ->
+                                                val candidates = result.candidates.take(10).mapNotNull {
+                                                    val t = it.text.trim()
+                                                    if (t.isNotEmpty() && t.first().isLetterOrDigit()) t.first().toString().lowercase() else null
+                                                }.distinct()
+
+                                                if (candidates.isNotEmpty()) {
+                                                    var bestChar: String? = null
+                                                    for (char in candidates) {
+                                                        val testQuery = searchQuery + char
+                                                        val hasMatch = filteredItems.any { item ->
+                                                            item.title.lowercase().contains(testQuery) || item.initials.contains(testQuery)
+                                                        }
+                                                        if (hasMatch) {
+                                                            bestChar = char
+                                                            break
+                                                        }
+                                                    }
+                                                    if (bestChar == null) {
+                                                        bestChar = candidates.first()
+                                                    }
+                                                    searchQuery += bestChar
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             )
                         }
+                    )
+
+                    // 右侧虚空，透传滑动
+                    Spacer(modifier = Modifier.weight(0.15f).fillMaxHeight())
+                }
+
+                // --- 幽灵滑块 ---
+                if (listState.isScrollInProgress) {
+                    val totalItems = filteredItems.size
+                    val visibleItemsInfo = listState.layoutInfo.visibleItemsInfo
+                    if (totalItems > 0 && visibleItemsInfo.isNotEmpty()) {
+                        val visibleItems = visibleItemsInfo.size.toFloat()
+                        val firstItemInfo = visibleItemsInfo.first()
+                        val exactScrollIndex = firstItemInfo.index.toFloat() + (abs(firstItemInfo.offset).toFloat() / firstItemInfo.size.coerceAtLeast(1))
+
+                        val thumbHeight = (trackHeightPx * (visibleItems / totalItems)).coerceIn(80f, trackHeightPx)
+                        val scrollProportion = exactScrollIndex / (totalItems - visibleItems).coerceAtLeast(1f)
+                        val scrollOffset = (trackHeightPx - thumbHeight) * scrollProportion
+
+                        val alignModifier = if (isScrollingLeft) Alignment.TopStart else Alignment.TopEnd
+                        val paddingModifier = if (isScrollingLeft) Modifier.padding(start = 24.dp) else Modifier.padding(end = 24.dp)
+
+                        Box(
+                            modifier = Modifier
+                                .align(alignModifier)
+                                .then(paddingModifier)
+                                .offset(y = with(density) { scrollOffset.toDp() })
+                                .width(12.dp)
+                                .height(with(density) { thumbHeight.toDp() })
+                                .background(Color(0xFFFFEB3B).copy(alpha = 0.3f), CircleShape)
+                        )
                     }
                 }
             }
@@ -476,7 +588,7 @@ fun GestureSearchApp() {
                     modifier = Modifier.fillMaxWidth().height(60.dp).background(Color(0xFF222222), CircleShape).border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape).padding(horizontal = 20.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = if (searchQuery.isEmpty()) "画一个字母开始搜索" else searchQuery, fontSize = 18.sp, color = if (searchQuery.isEmpty()) Color.Gray else Color(0xFFFFEB3B), fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                    Text(text = searchQuery.ifEmpty { "画一个字母开始搜索" }, fontSize = 18.sp, color = if (searchQuery.isEmpty()) Color.Gray else Color(0xFFFFEB3B), fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
                     if (searchQuery.isNotEmpty()) {
                         Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Color(0xFFFFEB3B)).clickable { searchQuery = "" }, contentAlignment = Alignment.Center) {
                             Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", tint = Color.Black, modifier = Modifier.size(18.dp))
