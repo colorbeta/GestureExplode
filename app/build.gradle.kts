@@ -5,16 +5,14 @@ plugins {
 
 android {
     namespace = "com.gesture.explode"
-    compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
-    }
+    // 回退到 34，直接使用本地已有的 SDK，绕过网络下载
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.gesture.explode"
         minSdk = 34
-        targetSdk = 36
+        // 回退到 34
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
 
@@ -31,7 +29,6 @@ android {
         }
     }
 
-    // 【核心修复区】：只保留 Java 17 的声明，删除了导致崩溃的旧版 Kotlin 声明
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -43,7 +40,6 @@ android {
 }
 
 dependencies {
-    // 默认的基础运行库
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -60,7 +56,8 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
-    // 两大核心引擎
     implementation("com.belerweb:pinyin4j:2.5.1")
+
+    // 保持 19.0.0 不变，它的底层 .so 库已经做好了 16KB 对齐
     implementation("com.google.mlkit:digital-ink-recognition:18.1.0")
 }

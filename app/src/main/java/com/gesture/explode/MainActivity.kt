@@ -15,6 +15,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -79,8 +81,8 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【版本号更新为 70】 ---
-const val BUILD_VERSION = 70
+// --- 【版本号更新为 74】 ---
+const val BUILD_VERSION = 74
 
 enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
@@ -144,7 +146,6 @@ fun HighlightedText(text: String, query: String, initials: String, initialIndice
 @SuppressLint("InlinedApi")
 fun getSystemSettingsItems(): List<SearchItem> {
     val settings = listOf(
-        // 🌐 网络与连接
         "WLAN / 无线网络" to Settings.ACTION_WIFI_SETTINGS,
         "蓝牙设置" to Settings.ACTION_BLUETOOTH_SETTINGS,
         "移动网络 / 蜂窝" to Settings.ACTION_NETWORK_OPERATOR_SETTINGS,
@@ -154,8 +155,6 @@ fun getSystemSettingsItems(): List<SearchItem> {
         "飞行模式" to Settings.ACTION_AIRPLANE_MODE_SETTINGS,
         "投屏 / 多屏互动" to Settings.ACTION_CAST_SETTINGS,
         "VPN 设置" to Settings.ACTION_VPN_SETTINGS,
-
-        // 👁️ 个人与显示
         "显示与亮度 / 屏幕" to Settings.ACTION_DISPLAY_SETTINGS,
         "深色模式 / 护眼" to Settings.ACTION_NIGHT_DISPLAY_SETTINGS,
         "声音与振动 / 音量" to Settings.ACTION_SOUND_SETTINGS,
@@ -163,24 +162,17 @@ fun getSystemSettingsItems(): List<SearchItem> {
         "日期和时间" to Settings.ACTION_DATE_SETTINGS,
         "语言与地区" to Settings.ACTION_LOCALE_SETTINGS,
         "输入法与键盘" to Settings.ACTION_INPUT_METHOD_SETTINGS,
-
-        // 🛡️ 隐私与安全
         "位置信息 / 定位" to Settings.ACTION_LOCATION_SOURCE_SETTINGS,
         "密码与安全 / 隐私" to Settings.ACTION_SECURITY_SETTINGS,
         "生物识别 / 指纹面部" to Settings.ACTION_BIOMETRIC_ENROLL,
         "锁屏与息屏" to "android.settings.LOCK_SCREEN_SETTINGS",
-
-        // 📦 应用与权限
         "应用管理 / 列表" to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
         "默认应用设置" to Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
         "通知管理 / 状态栏" to Settings.ACTION_ALL_APPS_NOTIFICATION_SETTINGS,
         "悬浮窗权限" to Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
         "未知来源安装" to Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-        // 【修复点：使用底层字符串常量强制调用】
         "画中画权限" to "android.settings.PICTURE_IN_PICTURE_SETTINGS",
         "后台运行 / 优化限制" to Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
-
-        // ⚙️ 系统与存储
         "存储空间 / 内存" to Settings.ACTION_INTERNAL_STORAGE_SETTINGS,
         "账号与同步" to Settings.ACTION_SYNC_SETTINGS,
         "关于手机 / 设备信息" to Settings.ACTION_DEVICE_INFO_SETTINGS,
@@ -188,13 +180,10 @@ fun getSystemSettingsItems(): List<SearchItem> {
         "开发者选项" to Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
         "电池与省电" to Settings.ACTION_BATTERY_SAVER_SETTINGS,
         "耗电详情 / 电量" to Intent.ACTION_POWER_USAGE_SUMMARY,
-
-        // 🛠️ 辅助与特色功能
         "无障碍 / 辅助功能" to Settings.ACTION_ACCESSIBILITY_SETTINGS,
         "搜索设置" to Settings.ACTION_SEARCH_SETTINGS,
         "勿扰模式" to Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS,
         "默认桌面 / 主屏幕" to Settings.ACTION_HOME_SETTINGS,
-        // 【修复点：使用底层字符串常量强制调用】
         "单手操作模式" to "android.settings.action.ONE_HANDED_SETTINGS"
     )
 
@@ -336,16 +325,12 @@ fun GestureSearchApp() {
     }
 
     val recognizer = remember {
-        val currentLanguage = Locale.getDefault().language
-        val modelTag = if (currentLanguage == "zh") "zh" else "en"
-        val m = DigitalInkRecognitionModel.builder(DigitalInkRecognitionModelIdentifier.fromLanguageTag(modelTag)!!).build()
+        val m = DigitalInkRecognitionModel.builder(DigitalInkRecognitionModelIdentifier.fromLanguageTag("en")!!).build()
         DigitalInkRecognition.getClient(DigitalInkRecognizerOptions.builder(m).build())
     }
 
     LaunchedEffect(Unit) {
-        val currentLanguage = Locale.getDefault().language
-        val modelTag = if (currentLanguage == "zh") "zh" else "en"
-        val m = DigitalInkRecognitionModel.builder(DigitalInkRecognitionModelIdentifier.fromLanguageTag(modelTag)!!).build()
+        val m = DigitalInkRecognitionModel.builder(DigitalInkRecognitionModelIdentifier.fromLanguageTag("en")!!).build()
         RemoteModelManager.getInstance().download(m, DownloadConditions.Builder().build()).addOnSuccessListener { isReady = true }
     }
 
@@ -443,7 +428,8 @@ fun GestureSearchApp() {
                 Spacer(Modifier.weight(1f)); IconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings", tint = if (isReady) Color.White else Color.Gray) }
             }
 
-            var isScrollingLeft by remember { mutableStateOf(false) }
+            // --- 【核心重构：镜像滚动指示器状态】 ---
+            var showIndicatorOnRight by remember { mutableStateOf(true) }
 
             BoxWithConstraints(
                 modifier = Modifier
@@ -455,7 +441,8 @@ fun GestureSearchApp() {
                                 val event = awaitPointerEvent(PointerEventPass.Initial)
                                 val change = event.changes.firstOrNull()
                                 if (change != null && change.pressed && !change.previousPressed) {
-                                    isScrollingLeft = change.position.x < size.width * 0.5f
+                                    // 重点：如果手指落在左侧区域，指示器靠右显示；反之亦然
+                                    showIndicatorOnRight = change.position.x < size.width * 0.5f
                                 }
                             }
                         }
@@ -592,6 +579,7 @@ fun GestureSearchApp() {
                     Spacer(modifier = Modifier.weight(0.15f).fillMaxHeight())
                 }
 
+                // --- 【优化后的镜像滚动条显示逻辑】 ---
                 if (listState.isScrollInProgress) {
                     val totalItems = filteredItems.size
                     val visibleItemsInfo = listState.layoutInfo.visibleItemsInfo
@@ -604,8 +592,9 @@ fun GestureSearchApp() {
                         val scrollProportion = exactScrollIndex / (totalItems - visibleItems).coerceAtLeast(1f)
                         val scrollOffset = (trackHeightPx - thumbHeight) * scrollProportion
 
-                        val alignModifier = if (isScrollingLeft) Alignment.TopStart else Alignment.TopEnd
-                        val paddingModifier = if (isScrollingLeft) Modifier.padding(start = 24.dp) else Modifier.padding(end = 24.dp)
+                        // 根据 showIndicatorOnRight 决定对齐方式和边距
+                        val alignModifier = if (showIndicatorOnRight) Alignment.TopEnd else Alignment.TopStart
+                        val paddingModifier = if (showIndicatorOnRight) Modifier.padding(end = 24.dp) else Modifier.padding(start = 24.dp)
 
                         Box(
                             modifier = Modifier
@@ -622,13 +611,48 @@ fun GestureSearchApp() {
 
             Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp).navigationBarsPadding()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().height(60.dp).background(Color(0xFF222222), CircleShape).border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape).padding(horizontal = 20.dp),
+                    modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(text = searchQuery.ifEmpty { "画一个字母开始搜索" }, fontSize = 18.sp, color = if (searchQuery.isEmpty()) Color.Gray else Color(0xFFFFEB3B), fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
-                    if (searchQuery.isNotEmpty()) {
-                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Color(0xFFFFEB3B)).clickable { searchQuery = "" }, contentAlignment = Alignment.Center) {
-                            Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", tint = Color.Black, modifier = Modifier.size(18.dp))
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(60.dp)
+                            .background(Color(0xFF222222), CircleShape)
+                            .border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape)
+                            .padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = searchQuery.ifEmpty { "画一个字母开始搜索" },
+                            fontSize = 18.sp,
+                            color = if (searchQuery.isEmpty()) Color.Gray else Color(0xFFFFEB3B),
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    AnimatedVisibility(
+                        visible = searchQuery.isNotEmpty(),
+                        enter = fadeIn() + expandHorizontally(expandFrom = Alignment.Start),
+                        exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.Start)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .padding(start = 12.dp)
+                                .size(60.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF222222))
+                                .border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape)
+                                .clickable { searchQuery = "" },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFFFFEB3B)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", tint = Color.Black, modifier = Modifier.size(20.dp))
+                            }
                         }
                     }
                 }
