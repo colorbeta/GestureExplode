@@ -8,7 +8,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.ContactsContract
-import android.util.Log
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -25,6 +25,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
@@ -37,9 +38,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
@@ -48,6 +47,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -76,49 +76,85 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【版本号更新为 37】 ---
-const val BUILD_VERSION = 37
+// --- 【版本号更新为 54】 ---
+const val BUILD_VERSION = 54
 
-enum class SearchItemType { APP, CONTACT, SETTINGS }
-data class SearchItem(val title: String, val subtitle: String, val pinyinInitials: String, val launchData: String, val type: SearchItemType, val contactId: String? = null)
+enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
-// 数据处理逻辑
-fun getPinyinInitials(text: String): String {
-    val sb = StringBuilder()
-    for (c in text) {
-        try {
-            val pinyinArray: Array<String>? = PinyinHelper.toHanyuPinyinStringArray(c)
-            if (pinyinArray != null && pinyinArray.isNotEmpty()) sb.append(pinyinArray[0][0]) else sb.append(c)
-        } catch (e: Exception) { sb.append(c) }
+data class SearchItem(
+    val title: String,
+    val subtitle: String,
+    val initials: String,
+    val initialIndices: List<Int>,
+    val launchData: String,
+    val type: SearchItemType,
+    val contactId: String? = null
+)
+
+fun getSearchInitialsInfo(text: String): Pair<String, List<Int>> {
+    val initials = StringBuilder()
+    val indices = mutableListOf<Int>()
+    var isNewWord = true
+    for (i in text.indices) {
+        val c = text[i]
+        val pinyinArray: Array<String>? = PinyinHelper.toHanyuPinyinStringArray(c)
+        if (pinyinArray != null && pinyinArray.isNotEmpty()) {
+            initials.append(pinyinArray[0][0]); indices.add(i); isNewWord = false
+        } else if (c.isLetterOrDigit()) {
+            if (isNewWord) { initials.append(c.lowercaseChar()); indices.add(i); isNewWord = false }
+        } else isNewWord = true
     }
-    return sb.toString().lowercase(Locale.getDefault())
+    return Pair(initials.toString(), indices)
 }
 
 @Composable
-fun HighlightedText(text: String, query: String, pinyinInitials: String) {
-    val annotatedString = remember(text, query) {
+fun HighlightedText(text: String, query: String, initials: String, initialIndices: List<Int>) {
+    val annotatedString = remember(text, query, initials, initialIndices) {
         buildAnnotatedString {
-            if (query.isEmpty()) append(text) else {
-                val lowerT = text.lowercase(Locale.getDefault()); val lowerQ = query.lowercase(Locale.getDefault())
-                val directIdx = lowerT.indexOf(lowerQ); val pinyinIdx = pinyinInitials.indexOf(lowerQ)
-                val highlightStyle = SpanStyle(color = Color.White, fontWeight = FontWeight.ExtraBold)
-                when {
-                    directIdx != -1 -> {
-                        append(text.substring(0, directIdx))
-                        withStyle(highlightStyle) { append(text.substring(directIdx, directIdx + query.length)) }
-                        append(text.substring(directIdx + query.length))
-                    }
-                    pinyinIdx != -1 && pinyinIdx + query.length <= text.length -> {
-                        append(text.substring(0, pinyinIdx))
-                        withStyle(highlightStyle) { append(text.substring(pinyinIdx, pinyinIdx + query.length)) }
-                        append(text.substring(pinyinIdx + query.length))
-                    }
-                    else -> append(text)
+            val lowerT = text.lowercase(Locale.getDefault())
+            val lowerQ = query.lowercase(Locale.getDefault())
+            val matchStyle = SpanStyle(color = Color.White, fontWeight = FontWeight.ExtraBold)
+            val dimStyle = SpanStyle(color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Normal)
+            if (query.isEmpty()) { withStyle(matchStyle) { append(text) }; return@buildAnnotatedString }
+            val directIdx = lowerT.indexOf(lowerQ); val acronymIdx = initials.indexOf(lowerQ)
+            when {
+                directIdx != -1 -> {
+                    withStyle(dimStyle) { append(text.substring(0, directIdx)) }
+                    withStyle(matchStyle) { append(text.substring(directIdx, directIdx + query.length)) }
+                    withStyle(dimStyle) { append(text.substring(directIdx + query.length)) }
                 }
+                acronymIdx != -1 -> {
+                    val matchedIndicesSet = mutableSetOf<Int>()
+                    for (i in lowerQ.indices) { matchedIndicesSet.add(initialIndices[acronymIdx + i]) }
+                    for (i in text.indices) {
+                        if (matchedIndicesSet.contains(i)) withStyle(matchStyle) { append(text[i]) }
+                        else withStyle(dimStyle) { append(text[i]) }
+                    }
+                }
+                else -> { withStyle(dimStyle) { append(text) } }
             }
         }
     }
-    Text(text = annotatedString, fontSize = 17.sp, color = if (query.isEmpty()) Color.White else Color.White.copy(alpha = 0.3f), fontWeight = FontWeight.Medium)
+    Text(text = annotatedString, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = Color.White)
+}
+
+fun getSystemSettingsItems(): List<SearchItem> {
+    val settings = listOf(
+        "开发者选项" to Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+        "WLAN" to Settings.ACTION_WIFI_SETTINGS,
+        "蓝牙设置" to Settings.ACTION_BLUETOOTH_SETTINGS,
+        "显示设置" to Settings.ACTION_DISPLAY_SETTINGS,
+        "电池信息" to Intent.ACTION_POWER_USAGE_SUMMARY,
+        "应用管理" to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
+        "无障碍" to Settings.ACTION_ACCESSIBILITY_SETTINGS,
+        "位置信息" to Settings.ACTION_LOCATION_SOURCE_SETTINGS,
+        "关于手机" to Settings.ACTION_DEVICE_INFO_SETTINGS,
+        "存储设置" to Settings.ACTION_INTERNAL_STORAGE_SETTINGS
+    )
+    return settings.map { (name, action) ->
+        val (initials, indices) = getSearchInitialsInfo(name)
+        SearchItem(name, "Setting", initials, indices, action, SearchItemType.SYSTEM_ACTION)
+    }
 }
 
 fun getInstalledApps(context: Context): List<SearchItem> {
@@ -129,7 +165,9 @@ fun getInstalledApps(context: Context): List<SearchItem> {
         val name = it.loadLabel(pm).toString()
         val pkg = it.activityInfo.packageName
         val type = if (pkg == "com.android.settings" || pkg.contains("settings", true)) SearchItemType.SETTINGS else SearchItemType.APP
-        SearchItem(name, "Application", getPinyinInitials(name), pkg, type)
+        val subtitle = if (type == SearchItemType.SETTINGS) "Setting" else "Application"
+        val (initials, indices) = getSearchInitialsInfo(name)
+        SearchItem(name, subtitle, initials, indices, pkg, type)
     }
 }
 
@@ -141,7 +179,10 @@ fun getContacts(context: Context): List<SearchItem> {
     context.contentResolver.query(uri, p, null, null, null)?.use { cursor ->
         while (cursor.moveToNext()) {
             val name = cursor.getString(0) ?: ""; val num = cursor.getString(1) ?: ""; val id = cursor.getString(2) ?: ""
-            if (name.isNotEmpty()) contacts.add(SearchItem(name, num, getPinyinInitials(name), num, SearchItemType.CONTACT, id))
+            if (name.isNotEmpty()) {
+                val (initials, indices) = getSearchInitialsInfo(name)
+                contacts.add(SearchItem(name, num, initials, indices, num, SearchItemType.CONTACT, id))
+            }
         }
     }
     return contacts.distinctBy { it.title }
@@ -185,9 +226,13 @@ fun GestureSearchApp() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val prefs = remember { context.getSharedPreferences("gesture_prefs", Context.MODE_PRIVATE) }
 
+    val listState = rememberLazyListState()
     var searchQuery by remember { mutableStateOf("") }
     var isReady by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+
+    // 输入自动置顶
+    LaunchedEffect(searchQuery) { listState.scrollToItem(0) }
 
     var searchAppsEnabled by remember { mutableStateOf(prefs.getBoolean("search_apps", true)) }
     var searchContactsEnabled by remember { mutableStateOf(prefs.getBoolean("search_contacts", true)) }
@@ -201,7 +246,8 @@ fun GestureSearchApp() {
     }
 
     val density = LocalDensity.current
-    val itemHeightPx = with(density) { 96.dp.toPx() }
+    val configuration = LocalConfiguration.current
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
 
     var hasContactPermission by remember {
         mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED)
@@ -211,17 +257,20 @@ fun GestureSearchApp() {
 
     val allApps = remember { getInstalledApps(context) }
     val allContacts = remember(hasContactPermission) { if (hasContactPermission) getContacts(context) else emptyList() }
-    val allItems = remember(allApps, allContacts, searchAppsEnabled, searchContactsEnabled, searchSettingsEnabled) {
+    val allSystemSettings = remember { getSystemSettingsItems() }
+
+    val allItems = remember(allApps, allContacts, allSystemSettings, searchAppsEnabled, searchContactsEnabled, searchSettingsEnabled) {
         val list = mutableListOf<SearchItem>()
         if (searchAppsEnabled) list.addAll(allApps.filter { it.type == SearchItemType.APP })
-        if (searchSettingsEnabled) list.addAll(allApps.filter { it.type == SearchItemType.SETTINGS })
+        if (searchSettingsEnabled) { list.addAll(allApps.filter { it.type == SearchItemType.SETTINGS }); list.addAll(allSystemSettings) }
         if (searchContactsEnabled) list.addAll(allContacts)
-        list.sortedBy { it.pinyinInitials }
+        list.sortedBy { it.title.lowercase() }
     }
 
     val filteredItems = remember(searchQuery, allItems) {
         if (searchQuery.isEmpty()) allItems else {
-            val q = searchQuery.lowercase(Locale.getDefault()); allItems.filter { it.title.lowercase(Locale.getDefault()).contains(q) || it.pinyinInitials.contains(q) }
+            val q = searchQuery.lowercase(Locale.getDefault())
+            allItems.filter { it.title.lowercase().contains(q) || it.initials.contains(q) }
         }
     }
 
@@ -293,23 +342,18 @@ fun GestureSearchApp() {
                 var strokeBuilder: Ink.Stroke.Builder? by remember { mutableStateOf(null) }
                 var recognizeJob by remember { mutableStateOf<Job?>(null) }
 
-                LazyColumn(modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 140.dp)) {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 140.dp)) {
                     itemsIndexed(filteredItems) { _, item ->
-                        // --- 【显示框圆角加大至 28.dp】 ---
-                        Card(
-                            modifier = Modifier.fillMaxWidth().height(88.dp).padding(horizontal = 12.dp, vertical = 6.dp),
-                            shape = RoundedCornerShape(28.dp),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
-                        ) {
+                        Card(modifier = Modifier.fillMaxWidth().height(88.dp).padding(horizontal = 12.dp, vertical = 6.dp), shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))) {
                             Row(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(44.dp), Alignment.Center) {
                                     when (item.type) {
                                         SearchItemType.CONTACT -> Icon(Icons.Default.Phone, null, tint = Color(0xFF8BC34A), modifier = Modifier.size(26.dp))
-                                        SearchItemType.SETTINGS -> Icon(Icons.Default.Settings, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(26.dp))
+                                        SearchItemType.SETTINGS, SearchItemType.SYSTEM_ACTION -> Icon(Icons.Default.Settings, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(26.dp))
                                         SearchItemType.APP -> AppIcon(item.launchData, Modifier.size(40.dp))
                                     }
                                 }
-                                Spacer(Modifier.width(16.dp)); Column { HighlightedText(item.title, searchQuery, item.pinyinInitials); Text(item.subtitle, fontSize = 12.sp, color = Color.Gray) }
+                                Spacer(Modifier.width(16.dp)); Column { HighlightedText(item.title, searchQuery, item.initials, item.initialIndices); Text(item.subtitle, fontSize = 12.sp, color = Color.Gray) }
                             }
                         }
                     }
@@ -317,26 +361,36 @@ fun GestureSearchApp() {
 
                 Canvas(modifier = Modifier.fillMaxSize()
                     .pointerInput(isReady, filteredItems) { detectTapGestures { offset ->
-                        val index = (offset.y / itemHeightPx).toInt()
-                        if (index >= 0 && index < filteredItems.size) {
-                            val item = filteredItems[index]
-                            try {
-                                val intent = when (item.type) {
-                                    SearchItemType.APP -> context.packageManager.getLaunchIntentForPackage(item.launchData)
-                                    SearchItemType.SETTINGS -> Intent(android.provider.Settings.ACTION_SETTINGS)
-                                    SearchItemType.CONTACT -> Intent(Intent.ACTION_VIEW).apply { data = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, item.contactId) }
-                                }
-                                intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); intent?.let { context.startActivity(it); searchQuery = "" }
-                            } catch (e: Exception) { }
+                        if (offset.x > screenWidthPx * 0.90f) return@detectTapGestures
+
+                        // --- 【核心修复】：根据像素位置寻找真正对应的列表项 ---
+                        val tappedItem = listState.layoutInfo.visibleItemsInfo.find { itemInfo ->
+                            offset.y.toInt() in itemInfo.offset .. (itemInfo.offset + itemInfo.size)
+                        }
+
+                        tappedItem?.let { itemInfo ->
+                            if (itemInfo.index < filteredItems.size) {
+                                val item = filteredItems[itemInfo.index]
+                                try {
+                                    val intent = when (item.type) {
+                                        SearchItemType.APP -> context.packageManager.getLaunchIntentForPackage(item.launchData)
+                                        SearchItemType.SETTINGS, SearchItemType.SYSTEM_ACTION -> Intent(item.launchData)
+                                        SearchItemType.CONTACT -> Intent(Intent.ACTION_VIEW).apply { data = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, item.contactId) }
+                                    }
+                                    intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); intent?.let { context.startActivity(it); searchQuery = "" }
+                                } catch (e: Exception) { }
+                            }
                         }
                     } }
                     .pointerInput(isReady) {
                         detectDragGestures(
                             onDragStart = { offset ->
+                                if (offset.x > screenWidthPx * 0.90f) return@detectDragGestures
                                 recognizeJob?.cancel(); currentPath.clear();
                                 strokeBuilder = Ink.Stroke.builder().apply { addPoint(Ink.Point.create(offset.x, offset.y, System.currentTimeMillis())) }
                             },
                             onDrag = { change, _ ->
+                                if (change.position.x > screenWidthPx * 0.90f) return@detectDragGestures
                                 currentPath.add(change.position)
                                 strokeBuilder?.addPoint(Ink.Point.create(change.position.x, change.position.y, System.currentTimeMillis()))
                             },
@@ -345,7 +399,6 @@ fun GestureSearchApp() {
                                     val p = Path().apply { moveTo(currentPath.first().x, currentPath.first().y); for (i in 1 until currentPath.size) lineTo(currentPath[i].x, currentPath[i].y) }
                                     paths.add(p); strokeBuilder?.let { inkBuilder.addStroke(it.build()) }
                                 }
-                                // 方向拦截判定
                                 if (currentPath.isNotEmpty()) {
                                     val dx = currentPath.last().x - currentPath.first().x
                                     val dy = currentPath.last().y - currentPath.first().y
@@ -377,43 +430,56 @@ fun GestureSearchApp() {
                         drawPath(p, Color(0xFFFFEB3B), style = Stroke(15f, cap = StrokeCap.Round, join = StrokeJoin.Round))
                     }
                 }
-            }
 
-            // --- 【搜索框修改：左右半圆形 Pixel 风格】 ---
-            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp).navigationBarsPadding()) {
-                Row(
+                // 悬浮滚动条层
+                BoxWithConstraints(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(60.dp)
-                        // 【修改点】：使用 CircleShape 实现左右半圆（药丸状）
-                        .background(Color(0xFF222222), CircleShape)
-                        .border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape)
-                        .padding(horizontal = 20.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .align(Alignment.CenterEnd)
+                        .width(56.dp)
+                        .padding(top = 10.dp, bottom = 150.dp, end = 16.dp)
                 ) {
-                    Text(
-                        text = if (searchQuery.isEmpty()) "画一个字母开始搜索" else searchQuery,
-                        fontSize = 18.sp,
-                        color = if (searchQuery.isEmpty()) Color.Gray else Color(0xFFFFEB3B),
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.weight(1f)
-                    )
+                    val trackHeightPx = this.constraints.maxHeight.toFloat()
+                    val totalItems = filteredItems.size
+                    val visibleItems = listState.layoutInfo.visibleItemsInfo.size
 
-                    if (searchQuery.isNotEmpty()) {
+                    if (totalItems > visibleItems && totalItems > 0) {
                         Box(
                             modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFFFEB3B))
-                                .clickable { searchQuery = "" },
-                            contentAlignment = Alignment.Center
+                                .fillMaxSize()
+                                .pointerInput(filteredItems) {
+                                    detectDragGestures { _, dragAmount ->
+                                        // 使用像素分发，解决卡顿
+                                        val totalPx = totalItems * 96.dp.toPx()
+                                        val delta = (dragAmount.y / trackHeightPx) * totalPx
+                                        listState.dispatchRawDelta(delta)
+                                    }
+                                },
+                            contentAlignment = Alignment.TopCenter
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear",
-                                tint = Color.Black,
-                                modifier = Modifier.size(18.dp)
+                            val thumbHeight = (trackHeightPx * (visibleItems.toFloat() / totalItems)).coerceIn(80f, trackHeightPx)
+                            val scrollOffset = (trackHeightPx - thumbHeight) * (listState.firstVisibleItemIndex.toFloat() / (totalItems - visibleItems).coerceAtLeast(1))
+
+                            Box(
+                                modifier = Modifier
+                                    .width(12.dp)
+                                    .height(with(density) { thumbHeight.toDp() })
+                                    .offset(y = with(density) { scrollOffset.toDp() })
+                                    .background(Color(0xFFFFEB3B).copy(alpha = 0.3f), CircleShape)
                             )
+                        }
+                    }
+                }
+            }
+
+            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp).navigationBarsPadding()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(60.dp).background(Color(0xFF222222), CircleShape).border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape).padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(text = if (searchQuery.isEmpty()) "画一个字母开始搜索" else searchQuery, fontSize = 18.sp, color = if (searchQuery.isEmpty()) Color.Gray else Color(0xFFFFEB3B), fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f))
+                    if (searchQuery.isNotEmpty()) {
+                        Box(modifier = Modifier.size(32.dp).clip(CircleShape).background(Color(0xFFFFEB3B)).clickable { searchQuery = "" }, contentAlignment = Alignment.Center) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", tint = Color.Black, modifier = Modifier.size(18.dp))
                         }
                     }
                 }

@@ -1,15 +1,26 @@
-*.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+# --- 签名文件 (核心保护) ---
+*.jks
+*.keystore
+*.p12
+*.key
+signing.properties
+# 挡住包含敏感密码的本地属性文件
 local.properties
+
+# --- Android 项目构建文件 ---
+.gradle/
+build/
+captures/
+bin/
+gen/
+
+# --- Android Studio / IntelliJ 配置文件 ---
+.idea/
+*.iml
+.idea/modules.xml
+.idea/workspace.xml
+.idea/libraries/
+
+# --- 缓存与日志 ---
+*.log
+.DS_Store
