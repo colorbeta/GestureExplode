@@ -59,6 +59,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,8 +86,8 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【基于稳定的 v74 核心，引入智能权重排序算法，版本号标记为 78】 ---
-const val BUILD_VERSION = 78
+// --- 【升级为 85：暗色水印提示，平滑复合微动效】 ---
+const val BUILD_VERSION = 85
 
 enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
@@ -322,7 +323,6 @@ fun GestureSearchApp() {
         list.sortedBy { it.title.lowercase() }
     }
 
-    // --- 【核心修改区：智能加权排序过滤系统】 ---
     val filteredItems = remember(searchQuery, allItems) {
         if (searchQuery.isEmpty()) return@remember allItems
         val q = searchQuery.lowercase(Locale.getDefault())
@@ -334,46 +334,38 @@ fun GestureSearchApp() {
             val iIdx = i.indexOf(q)
 
             if (tIdx != -1 || iIdx != -1) {
-                var score = 0
+                val effectiveIdx = when {
+                    iIdx != -1 && tIdx != -1 -> minOf(iIdx, tIdx)
+                    iIdx != -1 -> iIdx
+                    else -> tIdx
+                }
 
-                // 1. 绝对精准匹配 (如搜 "x" 匹配到名叫 "X" 的应用)
-                if (t == q) {
-                    score = 100000
+                var baseScore = 0
+
+                if (t == q || (i == q && t.length == q.length)) {
+                    baseScore = 100000
                 }
-                // 2. 单字/单字母强匹配 (如搜 "b" 匹配到应用 "雹")
-                else if (t.length == 1 && i == q) {
-                    score = 90000
-                }
-                // 3. 作为一个独立的词在开头匹配 (如搜 "x" 匹配到 "X (Twitter)")
                 else if (t.startsWith("$q ") || t.startsWith("$q(") || t.startsWith("$q-") || t.startsWith("${q}（")) {
-                    score = 80000
+                    baseScore = 90000
                 }
-                // 4. 标题字母开头前缀匹配 (如搜 "x" 匹配到 "xyz")
-                else if (tIdx == 0) {
-                    score = 70000
+                else if (effectiveIdx == 0) {
+                    baseScore = 70000
                 }
-                // 5. 首字母开头前缀匹配 (如搜 "w" 匹配到 "微信" wx)
-                else if (iIdx == 0) {
-                    score = 60000
-                }
-                // 6. 内部包含匹配
                 else {
-                    // 英文单词首字母匹配权重（iScore）高于 英文内部包含权重（tScore）
-                    val iScore = if (iIdx != -1) 50000 - iIdx * 100 else 0
-                    val tScore = if (tIdx != -1) 40000 - tIdx * 100 else 0
-                    score = maxOf(iScore, tScore)
+                    baseScore = 40000
                 }
 
-                // 长度惩罚：在同等匹配度下，名字越短越精准，避免长尾垃圾数据排在前面
-                score -= t.length
+                val ratioBonus = ((q.length.toFloat() / t.length.coerceAtLeast(1).toFloat()) * 10000).toInt()
+                val positionPenalty = effectiveIdx * 500
+                val finalScore = baseScore + ratioBonus - positionPenalty - t.length
 
-                Pair(item, score)
+                Pair(item, finalScore)
             } else {
                 null
             }
         }
-            .sortedByDescending { it.second } // 按分数从高到低排序
-            .map { it.first } // 提取最终排序好的列表
+            .sortedByDescending { it.second }
+            .map { it.first }
     }
 
     val recognizer = remember {
@@ -502,28 +494,61 @@ fun GestureSearchApp() {
                 val trackHeightPx = with(density) { maxHeight.toPx() }
                 val offsetXShift = trackWidthPx * 0.15f
 
-                LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 140.dp)) {
-                    itemsIndexed(filteredItems) { _, item ->
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(88.dp)
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                                .clip(RoundedCornerShape(28.dp))
-                                .clickable { onItemClick(item) },
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
-                        ) {
-                            Row(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(44.dp), Alignment.Center) {
-                                    when (item.type) {
-                                        SearchItemType.CONTACT -> Icon(Icons.Default.Phone, null, tint = Color(0xFF8BC34A), modifier = Modifier.size(26.dp))
-                                        SearchItemType.SETTINGS, SearchItemType.SYSTEM_ACTION -> Icon(Icons.Default.Settings, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(26.dp))
-                                        SearchItemType.APP -> AppIcon(item.launchData, Modifier.size(40.dp))
+                // --- 【微动效升级 1：给列表加入了从下往上的轻微滑动淡入效果】 ---
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = searchQuery.isNotEmpty(),
+                    enter = fadeIn(animationSpec = tween(400, easing = FastOutSlowInEasing)) + slideInVertically(initialOffsetY = { 60 }, animationSpec = tween(400, easing = FastOutSlowInEasing)),
+                    exit = fadeOut(animationSpec = tween(250)) + slideOutVertically(targetOffsetY = { 60 }, animationSpec = tween(250))
+                ) {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 120.dp)) {
+                        itemsIndexed(filteredItems) { _, item ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(88.dp)
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    .clip(RoundedCornerShape(28.dp))
+                                    .clickable { onItemClick(item) },
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+                            ) {
+                                Row(modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(44.dp), Alignment.Center) {
+                                        when (item.type) {
+                                            SearchItemType.CONTACT -> Icon(Icons.Default.Phone, null, tint = Color(0xFF8BC34A), modifier = Modifier.size(26.dp))
+                                            SearchItemType.SETTINGS, SearchItemType.SYSTEM_ACTION -> Icon(Icons.Default.Settings, null, tint = Color(0xFF00BCD4), modifier = Modifier.size(26.dp))
+                                            SearchItemType.APP -> AppIcon(item.launchData, Modifier.size(40.dp))
+                                        }
                                     }
+                                    Spacer(Modifier.width(16.dp)); Column { HighlightedText(item.title, searchQuery, item.initials, item.initialIndices); Text(item.subtitle, fontSize = 12.sp, color = Color.Gray) }
                                 }
-                                Spacer(Modifier.width(16.dp)); Column { HighlightedText(item.title, searchQuery, item.initials, item.initialIndices); Text(item.subtitle, fontSize = 12.sp, color = Color.Gray) }
                             }
                         }
+                    }
+                }
+
+                // --- 【微动效升级 2：为提示文字加入了呼吸缩放感，并使用高级暗水印配色】 ---
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = searchQuery.isEmpty(),
+                    enter = fadeIn(animationSpec = tween(500)) + scaleIn(initialScale = 0.95f, animationSpec = tween(500, easing = FastOutSlowInEasing)),
+                    exit = fadeOut(animationSpec = tween(300)) + scaleOut(targetScale = 0.95f, animationSpec = tween(300)),
+                    modifier = Modifier.align(Alignment.Center)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .offset(y = -120.dp) // 保持黄金分割居上
+                            .padding(horizontal = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "画一个字符开始搜索！",
+                            fontSize = 22.sp, // 稍微加大一点字号以配合较暗的颜色
+                            fontWeight = FontWeight.Bold,
+                            // 颜色与搜索结果卡片(0xFF1E1E1E)完全一致，融入底色(0xFF121212)形成雕刻水印感！
+                            color = Color(0xFF1E1E1E),
+                            textAlign = TextAlign.Center,
+                            letterSpacing = 2.sp
+                        )
                     }
                 }
 
@@ -543,12 +568,14 @@ fun GestureSearchApp() {
                         .fillMaxHeight()
                         .pointerInput(isReady, filteredItems) {
                             detectTapGestures { offset ->
-                                val tappedItem = listState.layoutInfo.visibleItemsInfo.find { itemInfo ->
-                                    offset.y.toInt() in itemInfo.offset until (itemInfo.offset + itemInfo.size)
-                                }
-                                tappedItem?.let { itemInfo ->
-                                    if (itemInfo.index in filteredItems.indices) {
-                                        onItemClick(filteredItems[itemInfo.index])
+                                if (searchQuery.isNotEmpty()) {
+                                    val tappedItem = listState.layoutInfo.visibleItemsInfo.find { itemInfo ->
+                                        offset.y.toInt() in itemInfo.offset until (itemInfo.offset + itemInfo.size)
+                                    }
+                                    tappedItem?.let { itemInfo ->
+                                        if (itemInfo.index in filteredItems.indices) {
+                                            onItemClick(filteredItems[itemInfo.index])
+                                        }
                                     }
                                 }
                             }
@@ -629,7 +656,7 @@ fun GestureSearchApp() {
                     Spacer(modifier = Modifier.weight(0.15f).fillMaxHeight())
                 }
 
-                if (listState.isScrollInProgress) {
+                if (searchQuery.isNotEmpty() && listState.isScrollInProgress) {
                     val totalItems = filteredItems.size
                     val visibleItemsInfo = listState.layoutInfo.visibleItemsInfo
                     if (totalItems > 0 && visibleItemsInfo.isNotEmpty()) {
@@ -637,9 +664,14 @@ fun GestureSearchApp() {
                         val firstItemInfo = visibleItemsInfo.first()
                         val exactScrollIndex = firstItemInfo.index.toFloat() + (abs(firstItemInfo.offset).toFloat() / firstItemInfo.size.coerceAtLeast(1))
 
-                        val thumbHeight = (trackHeightPx * (visibleItems / totalItems)).coerceIn(80f, trackHeightPx)
+                        val navBarBottomPx = WindowInsets.navigationBars.getBottom(density)
+                        val searchBoxBottomMarginPx = with(density) { 24.dp.toPx() } + navBarBottomPx
+
+                        val effectiveTrackHeightPx = trackHeightPx - searchBoxBottomMarginPx
+
+                        val thumbHeight = (effectiveTrackHeightPx * (visibleItems / totalItems)).coerceIn(80f, effectiveTrackHeightPx)
                         val scrollProportion = exactScrollIndex / (totalItems - visibleItems).coerceAtLeast(1f)
-                        val scrollOffset = (trackHeightPx - thumbHeight) * scrollProportion
+                        val scrollOffset = (effectiveTrackHeightPx - thumbHeight) * scrollProportion
 
                         val alignModifier = if (showIndicatorOnRight) Alignment.TopEnd else Alignment.TopStart
                         val paddingModifier = if (showIndicatorOnRight) Modifier.padding(end = 24.dp) else Modifier.padding(start = 24.dp)
@@ -655,51 +687,61 @@ fun GestureSearchApp() {
                         )
                     }
                 }
-            }
 
-            Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp).navigationBarsPadding()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().animateContentSize(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)),
-                    verticalAlignment = Alignment.CenterVertically
+                // --- 【微动效升级 3：底部搜索框使用基于物理的 Spring（弹簧）动画】 ---
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = searchQuery.isNotEmpty(),
+                    enter = slideInVertically(
+                        initialOffsetY = { it },
+                        animationSpec = spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow)
+                    ) + fadeIn(),
+                    exit = slideOutVertically(
+                        targetOffsetY = { it },
+                        animationSpec = tween(300, easing = FastOutLinearInEasing)
+                    ) + fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomCenter)
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(60.dp)
-                            .background(Color(0xFF222222), CircleShape)
-                            .border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape)
-                            .padding(horizontal = 20.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = searchQuery.ifEmpty { "画一个字母开始搜索" },
-                            fontSize = 18.sp,
-                            color = if (searchQuery.isEmpty()) Color.Gray else Color(0xFFFFEB3B),
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-
-                    AnimatedVisibility(
-                        visible = searchQuery.isNotEmpty(),
-                        enter = fadeIn() + expandHorizontally(expandFrom = Alignment.Start),
-                        exit = fadeOut() + shrinkHorizontally(shrinkTowards = Alignment.Start)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .padding(start = 12.dp)
-                                .size(60.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF222222))
-                                .border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape)
-                                .clickable { searchQuery = "" },
-                            contentAlignment = Alignment.Center
+                    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 24.dp).navigationBarsPadding()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(60.dp)
+                                    .background(Color(0xFF222222), CircleShape)
+                                    .border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape)
+                                    .padding(horizontal = 20.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = searchQuery,
+                                    fontSize = 24.sp,
+                                    letterSpacing = 2.sp,
+                                    color = Color(0xFFFFEB3B),
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+
                             Box(
-                                modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFFFFEB3B)),
+                                modifier = Modifier
+                                    .padding(start = 12.dp)
+                                    .size(60.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF222222))
+                                    .border(0.5.dp, Color.White.copy(alpha = 0.05f), CircleShape)
+                                    .clickable { searchQuery = "" },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", tint = Color.Black, modifier = Modifier.size(20.dp))
+                                Box(
+                                    modifier = Modifier.size(40.dp).clip(CircleShape).background(Color(0xFFFFEB3B)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(imageVector = Icons.Default.Close, contentDescription = "Clear", tint = Color.Black, modifier = Modifier.size(20.dp))
+                                }
                             }
                         }
                     }
