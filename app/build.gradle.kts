@@ -13,8 +13,9 @@ android {
         minSdk = 34
         // 回退到 34
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        //内部测试版本号
+        versionCode = 85
+        versionName = "1.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
