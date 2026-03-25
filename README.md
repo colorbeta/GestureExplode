@@ -4,7 +4,7 @@
 
 最低安装要求：Android 14 (API 34)，原生 64 位 (arm64-v8a)
 
-<img alt="logobeta.png" height="600" src="app/src/main/res/drawable/Gemini_Generated_Image_e1zmmie1zmmie1zm.png" />
+<img alt="logobeta.png" height="600" src="app/src/main/res/drawable/gesture_guide.png" />
 
 
 # 关于f和t识别错误的问题

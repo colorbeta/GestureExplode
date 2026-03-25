@@ -86,8 +86,8 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【升级为 85：暗色水印提示，平滑复合微动效】 ---
-const val BUILD_VERSION = 85
+// --- 【升级为 86：引入 Z/2 智能防混淆机制与穿透搜索排序】 ---
+const val BUILD_VERSION = 86
 
 enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
@@ -117,25 +117,43 @@ fun getSearchInitialsInfo(text: String): Pair<String, List<Int>> {
     return Pair(initials.toString(), indices)
 }
 
+// 核心升级：高亮组件现在能够同时识别和点亮 'z' 以及被裂变搜索出来的 '2'
 @Composable
 fun HighlightedText(text: String, query: String, initials: String, initialIndices: List<Int>) {
     val annotatedString = remember(text, query, initials, initialIndices) {
         buildAnnotatedString {
             val lowerT = text.lowercase(Locale.getDefault())
             val lowerQ = query.lowercase(Locale.getDefault())
+            val lowerQNum = lowerQ.replace('z', '2') // 镜像变体
+
             val matchStyle = SpanStyle(color = Color.White, fontWeight = FontWeight.ExtraBold)
             val dimStyle = SpanStyle(color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Normal)
+
             if (query.isEmpty()) { withStyle(matchStyle) { append(text) }; return@buildAnnotatedString }
-            val directIdx = lowerT.indexOf(lowerQ); val acronymIdx = initials.indexOf(lowerQ)
+
+            var directIdx = lowerT.indexOf(lowerQ)
+            var matchedQ = lowerQ
+            if (directIdx == -1 && lowerQ != lowerQNum) {
+                directIdx = lowerT.indexOf(lowerQNum)
+                matchedQ = lowerQNum
+            }
+
+            var acronymIdx = initials.indexOf(lowerQ)
+            var matchedAcronymQ = lowerQ
+            if (acronymIdx == -1 && lowerQ != lowerQNum) {
+                acronymIdx = initials.indexOf(lowerQNum)
+                matchedAcronymQ = lowerQNum
+            }
+
             when {
                 directIdx != -1 -> {
                     withStyle(dimStyle) { append(text.substring(0, directIdx)) }
-                    withStyle(matchStyle) { append(text.substring(directIdx, directIdx + query.length)) }
-                    withStyle(dimStyle) { append(text.substring(directIdx + query.length)) }
+                    withStyle(matchStyle) { append(text.substring(directIdx, directIdx + matchedQ.length)) }
+                    withStyle(dimStyle) { append(text.substring(directIdx + matchedQ.length)) }
                 }
                 acronymIdx != -1 -> {
                     val matchedIndicesSet = mutableSetOf<Int>()
-                    for (i in lowerQ.indices) { matchedIndicesSet.add(initialIndices[acronymIdx + i]) }
+                    for (i in matchedAcronymQ.indices) { matchedIndicesSet.add(initialIndices[acronymIdx + i]) }
                     for (i in text.indices) {
                         if (i in matchedIndicesSet) withStyle(matchStyle) { append(text[i]) }
                         else withStyle(dimStyle) { append(text[i]) }
@@ -146,6 +164,39 @@ fun HighlightedText(text: String, query: String, initials: String, initialIndice
         }
     }
     Text(text = annotatedString, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = Color.White)
+}
+
+// 新增：专用于手机号码的高亮组件，使得搜 2 或 z 时，手机号中的数字也能被黄色高亮提示
+@Composable
+fun HighlightedSubtitle(text: String, query: String) {
+    val annotatedString = remember(text, query) {
+        buildAnnotatedString {
+            val lowerT = text.lowercase(Locale.getDefault())
+            val lowerQ = query.lowercase(Locale.getDefault())
+            val lowerQNum = lowerQ.replace('z', '2')
+
+            val matchStyle = SpanStyle(color = Color(0xFFFFEB3B), fontWeight = FontWeight.Bold)
+            val dimStyle = SpanStyle(color = Color.Gray, fontWeight = FontWeight.Normal)
+
+            if (query.isEmpty()) { withStyle(dimStyle) { append(text) }; return@buildAnnotatedString }
+
+            var directIdx = lowerT.indexOf(lowerQ)
+            var matchedQ = lowerQ
+            if (directIdx == -1 && lowerQ != lowerQNum) {
+                directIdx = lowerT.indexOf(lowerQNum)
+                matchedQ = lowerQNum
+            }
+
+            if (directIdx != -1) {
+                withStyle(dimStyle) { append(text.substring(0, directIdx)) }
+                withStyle(matchStyle) { append(text.substring(directIdx, directIdx + matchedQ.length)) }
+                withStyle(dimStyle) { append(text.substring(directIdx + matchedQ.length)) }
+            } else {
+                withStyle(dimStyle) { append(text) }
+            }
+        }
+    }
+    Text(text = annotatedString, fontSize = 12.sp)
 }
 
 @SuppressLint("InlinedApi")
@@ -323,41 +374,76 @@ fun GestureSearchApp() {
         list.sortedBy { it.title.lowercase() }
     }
 
+    // --- 【核心升级区：双轨裂变搜索与优先级梯队计算】 ---
     val filteredItems = remember(searchQuery, allItems) {
         if (searchQuery.isEmpty()) return@remember allItems
         val q = searchQuery.lowercase(Locale.getDefault())
+        val qNum = q.replace('z', '2') // 生成变体，用于降级匹配
 
         allItems.mapNotNull { item ->
             val t = item.title.lowercase(Locale.getDefault())
             val i = item.initials
-            val tIdx = t.indexOf(q)
-            val iIdx = i.indexOf(q)
+            val sub = item.subtitle.lowercase(Locale.getDefault())
 
-            if (tIdx != -1 || iIdx != -1) {
-                val effectiveIdx = when {
-                    iIdx != -1 && tIdx != -1 -> minOf(iIdx, tIdx)
-                    iIdx != -1 -> iIdx
-                    else -> tIdx
-                }
+            val tIdxZ = t.indexOf(q)
+            val iIdxZ = i.indexOf(q)
 
+            val tIdxNum = if (q != qNum) t.indexOf(qNum) else -1
+            val iIdxNum = if (q != qNum) i.indexOf(qNum) else -1
+
+            val subIdxZ = if (item.type == SearchItemType.CONTACT) sub.indexOf(q) else -1
+            val subIdxNum = if (item.type == SearchItemType.CONTACT && q != qNum) sub.indexOf(qNum) else -1
+
+            val isMatchZ = tIdxZ != -1 || iIdxZ != -1
+            val isMatchNum = tIdxNum != -1 || iIdxNum != -1
+            val isMatchSubZ = subIdxZ != -1
+            val isMatchSubNum = subIdxNum != -1
+
+            if (isMatchZ || isMatchNum || isMatchSubZ || isMatchSubNum) {
                 var baseScore = 0
+                var effectiveIdx = -1
+                var matchedLength = 1
+                var targetLen = t.length
 
-                if (t == q || (i == q && t.length == q.length)) {
-                    baseScore = 100000
+                // 梯队 1: 标题含 Z (最高优)
+                if (isMatchZ) {
+                    effectiveIdx = when {
+                        iIdxZ != -1 && tIdxZ != -1 -> minOf(iIdxZ, tIdxZ)
+                        iIdxZ != -1 -> iIdxZ
+                        else -> tIdxZ
+                    }
+                    if (t == q || (i == q && t.length == q.length)) baseScore = 100000
+                    else if (t.startsWith("$q ") || t.startsWith("$q(") || t.startsWith("$q-") || t.startsWith("${q}（")) baseScore = 90000
+                    else if (effectiveIdx == 0) baseScore = 70000
+                    else baseScore = 40000
+                    matchedLength = q.length
                 }
-                else if (t.startsWith("$q ") || t.startsWith("$q(") || t.startsWith("$q-") || t.startsWith("${q}（")) {
-                    baseScore = 90000
+                // 梯队 2: 标题含 2 (降级匹配)
+                else if (isMatchNum) {
+                    effectiveIdx = when {
+                        iIdxNum != -1 && tIdxNum != -1 -> minOf(iIdxNum, tIdxNum)
+                        iIdxNum != -1 -> iIdxNum
+                        else -> tIdxNum
+                    }
+                    // 分数低于原生 Z，确保 Z 优先于 2
+                    if (t == qNum || (i == qNum && t.length == qNum.length)) baseScore = 95000
+                    else if (t.startsWith("$qNum ") || t.startsWith("$qNum(") || t.startsWith("$qNum-") || t.startsWith("${qNum}（")) baseScore = 85000
+                    else if (effectiveIdx == 0) baseScore = 65000
+                    else baseScore = 35000
+                    matchedLength = qNum.length
                 }
-                else if (effectiveIdx == 0) {
-                    baseScore = 70000
-                }
-                else {
-                    baseScore = 40000
+                // 梯队 3 & 4: 穿透到副标题(手机号码)匹配
+                else if (isMatchSubZ || isMatchSubNum) {
+                    effectiveIdx = if (isMatchSubZ) subIdxZ else subIdxNum
+                    // 手机号匹配得分远低于标题，且 Z 优先于 2
+                    baseScore = if (isMatchSubZ) 20000 else 15000
+                    matchedLength = if (isMatchSubZ) q.length else qNum.length
+                    targetLen = sub.length
                 }
 
-                val ratioBonus = ((q.length.toFloat() / t.length.coerceAtLeast(1).toFloat()) * 10000).toInt()
+                val ratioBonus = ((matchedLength.toFloat() / targetLen.coerceAtLeast(1).toFloat()) * 10000).toInt()
                 val positionPenalty = effectiveIdx * 500
-                val finalScore = baseScore + ratioBonus - positionPenalty - t.length
+                val finalScore = baseScore + ratioBonus - positionPenalty - targetLen
 
                 Pair(item, finalScore)
             } else {
@@ -439,6 +525,17 @@ fun GestureSearchApp() {
                     }
                 }
 
+                val packageInfo = remember {
+                    try { context.packageManager.getPackageInfo(context.packageName, 0) } catch (e: Exception) { null }
+                }
+                val vName = packageInfo?.versionName ?: "1.4"
+                val vCode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    packageInfo?.longVersionCode ?: BUILD_VERSION.toLong()
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageInfo?.versionCode?.toLong() ?: BUILD_VERSION.toLong()
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -457,7 +554,7 @@ fun GestureSearchApp() {
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "Gesture Explode v$BUILD_VERSION",
+                        text = "Gesture Explode v$vName (Build $vCode)",
                         color = Color.Gray.copy(alpha = 0.5f),
                         fontSize = 12.sp
                     )
@@ -494,7 +591,6 @@ fun GestureSearchApp() {
                 val trackHeightPx = with(density) { maxHeight.toPx() }
                 val offsetXShift = trackWidthPx * 0.15f
 
-                // --- 【微动效升级 1：给列表加入了从下往上的轻微滑动淡入效果】 ---
                 androidx.compose.animation.AnimatedVisibility(
                     visible = searchQuery.isNotEmpty(),
                     enter = fadeIn(animationSpec = tween(400, easing = FastOutSlowInEasing)) + slideInVertically(initialOffsetY = { 60 }, animationSpec = tween(400, easing = FastOutSlowInEasing)),
@@ -519,14 +615,18 @@ fun GestureSearchApp() {
                                             SearchItemType.APP -> AppIcon(item.launchData, Modifier.size(40.dp))
                                         }
                                     }
-                                    Spacer(Modifier.width(16.dp)); Column { HighlightedText(item.title, searchQuery, item.initials, item.initialIndices); Text(item.subtitle, fontSize = 12.sp, color = Color.Gray) }
+                                    Spacer(Modifier.width(16.dp))
+                                    Column {
+                                        HighlightedText(item.title, searchQuery, item.initials, item.initialIndices)
+                                        // 手机号码(或副标题)应用新的高亮组件
+                                        HighlightedSubtitle(item.subtitle, searchQuery)
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                // --- 【微动效升级 2：为提示文字加入了呼吸缩放感，并使用高级暗水印配色】 ---
                 androidx.compose.animation.AnimatedVisibility(
                     visible = searchQuery.isEmpty(),
                     enter = fadeIn(animationSpec = tween(500)) + scaleIn(initialScale = 0.95f, animationSpec = tween(500, easing = FastOutSlowInEasing)),
@@ -536,15 +636,14 @@ fun GestureSearchApp() {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .offset(y = -120.dp) // 保持黄金分割居上
+                            .offset(y = -120.dp)
                             .padding(horizontal = 24.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = "画一个字符开始搜索！",
-                            fontSize = 22.sp, // 稍微加大一点字号以配合较暗的颜色
+                            fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
-                            // 颜色与搜索结果卡片(0xFF1E1E1E)完全一致，融入底色(0xFF121212)形成雕刻水印感！
                             color = Color(0xFF1E1E1E),
                             textAlign = TextAlign.Center,
                             letterSpacing = 2.sp
@@ -623,17 +722,33 @@ fun GestureSearchApp() {
                                         val finalInk = inkBuilder.build(); inkBuilder = Ink.builder(); paths.clear()
                                         if (finalInk.strokes.isNotEmpty()) {
                                             recognizer.recognize(finalInk).addOnSuccessListener { result ->
+
+                                                // --- 【核心升级区：ML Kit 结果截获与强转】 ---
                                                 val candidates = result.candidates.take(10).mapNotNull {
-                                                    val t = it.text.trim()
-                                                    if (t.isNotEmpty() && t.first().isLetterOrDigit()) t.first().toString().lowercase() else null
+                                                    val tStr = it.text.trim()
+                                                    if (tStr.isNotEmpty() && tStr.first().isLetterOrDigit()) {
+                                                        var char = tStr.first().toString().lowercase()
+                                                        // “降维打击”：只要 AI 觉得是 2，我们按着它的头让它变成 z
+                                                        if (char == "2") char = "z"
+                                                        char
+                                                    } else null
                                                 }.distinct()
 
                                                 if (candidates.isNotEmpty()) {
                                                     var bestChar: String? = null
                                                     for (char in candidates) {
                                                         val testQuery = searchQuery + char
+                                                        val testQueryNum = testQuery.replace('z', '2') // 模拟裂变验证
+
+                                                        // 验证裂变结果是否有货，以此决定是否采纳这个按键
                                                         val hasMatch = filteredItems.any { item ->
-                                                            item.title.lowercase().contains(testQuery) || item.initials.contains(testQuery)
+                                                            val t = item.title.lowercase()
+                                                            val i = item.initials
+                                                            val sub = item.subtitle.lowercase()
+
+                                                            t.contains(testQuery) || i.contains(testQuery) ||
+                                                                    t.contains(testQueryNum) || i.contains(testQueryNum) ||
+                                                                    (item.type == SearchItemType.CONTACT && (sub.contains(testQuery) || sub.contains(testQueryNum)))
                                                         }
                                                         if (hasMatch) {
                                                             bestChar = char
@@ -688,7 +803,6 @@ fun GestureSearchApp() {
                     }
                 }
 
-                // --- 【微动效升级 3：底部搜索框使用基于物理的 Spring（弹簧）动画】 ---
                 androidx.compose.animation.AnimatedVisibility(
                     visible = searchQuery.isNotEmpty(),
                     enter = slideInVertically(
