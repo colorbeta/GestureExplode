@@ -86,8 +86,8 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【升级为 86：引入 Z/2 智能防混淆机制与穿透搜索排序】 ---
-const val BUILD_VERSION = 86
+// --- 【升级为 88：引入中英文双语动态支持】 ---
+const val BUILD_VERSION = 88
 
 enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
@@ -117,14 +117,13 @@ fun getSearchInitialsInfo(text: String): Pair<String, List<Int>> {
     return Pair(initials.toString(), indices)
 }
 
-// 核心升级：高亮组件现在能够同时识别和点亮 'z' 以及被裂变搜索出来的 '2'
 @Composable
 fun HighlightedText(text: String, query: String, initials: String, initialIndices: List<Int>) {
     val annotatedString = remember(text, query, initials, initialIndices) {
         buildAnnotatedString {
             val lowerT = text.lowercase(Locale.getDefault())
             val lowerQ = query.lowercase(Locale.getDefault())
-            val lowerQNum = lowerQ.replace('z', '2') // 镜像变体
+            val lowerQFallback = lowerQ.replace('z', '2').replace('l', '1')
 
             val matchStyle = SpanStyle(color = Color.White, fontWeight = FontWeight.ExtraBold)
             val dimStyle = SpanStyle(color = Color.White.copy(alpha = 0.5f), fontWeight = FontWeight.Normal)
@@ -133,16 +132,16 @@ fun HighlightedText(text: String, query: String, initials: String, initialIndice
 
             var directIdx = lowerT.indexOf(lowerQ)
             var matchedQ = lowerQ
-            if (directIdx == -1 && lowerQ != lowerQNum) {
-                directIdx = lowerT.indexOf(lowerQNum)
-                matchedQ = lowerQNum
+            if (directIdx == -1 && lowerQ != lowerQFallback) {
+                directIdx = lowerT.indexOf(lowerQFallback)
+                matchedQ = lowerQFallback
             }
 
             var acronymIdx = initials.indexOf(lowerQ)
             var matchedAcronymQ = lowerQ
-            if (acronymIdx == -1 && lowerQ != lowerQNum) {
-                acronymIdx = initials.indexOf(lowerQNum)
-                matchedAcronymQ = lowerQNum
+            if (acronymIdx == -1 && lowerQ != lowerQFallback) {
+                acronymIdx = initials.indexOf(lowerQFallback)
+                matchedAcronymQ = lowerQFallback
             }
 
             when {
@@ -166,14 +165,13 @@ fun HighlightedText(text: String, query: String, initials: String, initialIndice
     Text(text = annotatedString, fontSize = 17.sp, fontWeight = FontWeight.Medium, color = Color.White)
 }
 
-// 新增：专用于手机号码的高亮组件，使得搜 2 或 z 时，手机号中的数字也能被黄色高亮提示
 @Composable
 fun HighlightedSubtitle(text: String, query: String) {
     val annotatedString = remember(text, query) {
         buildAnnotatedString {
             val lowerT = text.lowercase(Locale.getDefault())
             val lowerQ = query.lowercase(Locale.getDefault())
-            val lowerQNum = lowerQ.replace('z', '2')
+            val lowerQFallback = lowerQ.replace('z', '2').replace('l', '1')
 
             val matchStyle = SpanStyle(color = Color(0xFFFFEB3B), fontWeight = FontWeight.Bold)
             val dimStyle = SpanStyle(color = Color.Gray, fontWeight = FontWeight.Normal)
@@ -182,9 +180,9 @@ fun HighlightedSubtitle(text: String, query: String) {
 
             var directIdx = lowerT.indexOf(lowerQ)
             var matchedQ = lowerQ
-            if (directIdx == -1 && lowerQ != lowerQNum) {
-                directIdx = lowerT.indexOf(lowerQNum)
-                matchedQ = lowerQNum
+            if (directIdx == -1 && lowerQ != lowerQFallback) {
+                directIdx = lowerT.indexOf(lowerQFallback)
+                matchedQ = lowerQFallback
             }
 
             if (directIdx != -1) {
@@ -199,53 +197,54 @@ fun HighlightedSubtitle(text: String, query: String) {
     Text(text = annotatedString, fontSize = 12.sp)
 }
 
+// 核心升级：系统设置名称全面实现双语映射
 @SuppressLint("InlinedApi")
-fun getSystemSettingsItems(): List<SearchItem> {
+fun getSystemSettingsItems(isChinese: Boolean): List<SearchItem> {
     val settings = listOf(
-        "WLAN / 无线网络" to Settings.ACTION_WIFI_SETTINGS,
-        "蓝牙设置" to Settings.ACTION_BLUETOOTH_SETTINGS,
-        "移动网络 / 蜂窝" to Settings.ACTION_NETWORK_OPERATOR_SETTINGS,
-        "数据使用 / 流量管理" to Settings.ACTION_DATA_USAGE_SETTINGS,
-        "个人热点 / 共享" to Settings.ACTION_WIRELESS_SETTINGS,
-        "NFC / 触碰付款" to Settings.ACTION_NFC_SETTINGS,
-        "飞行模式" to Settings.ACTION_AIRPLANE_MODE_SETTINGS,
-        "投屏 / 多屏互动" to Settings.ACTION_CAST_SETTINGS,
-        "VPN 设置" to Settings.ACTION_VPN_SETTINGS,
-        "显示与亮度 / 屏幕" to Settings.ACTION_DISPLAY_SETTINGS,
-        "深色模式 / 护眼" to Settings.ACTION_NIGHT_DISPLAY_SETTINGS,
-        "声音与振动 / 音量" to Settings.ACTION_SOUND_SETTINGS,
-        "壁纸与个性化" to Intent.ACTION_SET_WALLPAPER,
-        "日期和时间" to Settings.ACTION_DATE_SETTINGS,
-        "语言与地区" to Settings.ACTION_LOCALE_SETTINGS,
-        "输入法与键盘" to Settings.ACTION_INPUT_METHOD_SETTINGS,
-        "位置信息 / 定位" to Settings.ACTION_LOCATION_SOURCE_SETTINGS,
-        "密码与安全 / 隐私" to Settings.ACTION_SECURITY_SETTINGS,
-        "生物识别 / 指纹面部" to Settings.ACTION_BIOMETRIC_ENROLL,
-        "锁屏与息屏" to "android.settings.LOCK_SCREEN_SETTINGS",
-        "应用管理 / 列表" to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
-        "默认应用设置" to Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
-        "通知管理 / 状态栏" to Settings.ACTION_ALL_APPS_NOTIFICATION_SETTINGS,
-        "悬浮窗权限" to Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-        "未知来源安装" to Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-        "画中画权限" to "android.settings.PICTURE_IN_PICTURE_SETTINGS",
-        "后台运行 / 优化限制" to Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
-        "存储空间 / 内存" to Settings.ACTION_INTERNAL_STORAGE_SETTINGS,
-        "账号与同步" to Settings.ACTION_SYNC_SETTINGS,
-        "关于手机 / 设备信息" to Settings.ACTION_DEVICE_INFO_SETTINGS,
-        "系统更新 / 软件升级" to "android.settings.SYSTEM_UPDATE_SETTINGS",
-        "开发者选项" to Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
-        "电池与省电" to Settings.ACTION_BATTERY_SAVER_SETTINGS,
-        "耗电详情 / 电量" to Intent.ACTION_POWER_USAGE_SUMMARY,
-        "无障碍 / 辅助功能" to Settings.ACTION_ACCESSIBILITY_SETTINGS,
-        "搜索设置" to Settings.ACTION_SEARCH_SETTINGS,
-        "勿扰模式" to Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS,
-        "默认桌面 / 主屏幕" to Settings.ACTION_HOME_SETTINGS,
-        "单手操作模式" to "android.settings.action.ONE_HANDED_SETTINGS"
+        (if(isChinese) "WLAN / 无线网络" else "Wi-Fi") to Settings.ACTION_WIFI_SETTINGS,
+        (if(isChinese) "蓝牙设置" else "Bluetooth") to Settings.ACTION_BLUETOOTH_SETTINGS,
+        (if(isChinese) "移动网络 / 蜂窝" else "Mobile Network") to Settings.ACTION_NETWORK_OPERATOR_SETTINGS,
+        (if(isChinese) "数据使用 / 流量管理" else "Data Usage") to Settings.ACTION_DATA_USAGE_SETTINGS,
+        (if(isChinese) "个人热点 / 共享" else "Hotspot & Tethering") to Settings.ACTION_WIRELESS_SETTINGS,
+        (if(isChinese) "NFC / 触碰付款" else "NFC") to Settings.ACTION_NFC_SETTINGS,
+        (if(isChinese) "飞行模式" else "Airplane Mode") to Settings.ACTION_AIRPLANE_MODE_SETTINGS,
+        (if(isChinese) "投屏 / 多屏互动" else "Cast") to Settings.ACTION_CAST_SETTINGS,
+        (if(isChinese) "VPN 设置" else "VPN") to Settings.ACTION_VPN_SETTINGS,
+        (if(isChinese) "显示与亮度 / 屏幕" else "Display") to Settings.ACTION_DISPLAY_SETTINGS,
+        (if(isChinese) "深色模式 / 护眼" else "Dark Mode") to Settings.ACTION_NIGHT_DISPLAY_SETTINGS,
+        (if(isChinese) "声音与振动 / 音量" else "Sound & Vibration") to Settings.ACTION_SOUND_SETTINGS,
+        (if(isChinese) "壁纸与个性化" else "Wallpaper") to Intent.ACTION_SET_WALLPAPER,
+        (if(isChinese) "日期和时间" else "Date & Time") to Settings.ACTION_DATE_SETTINGS,
+        (if(isChinese) "语言与地区" else "Language & Region") to Settings.ACTION_LOCALE_SETTINGS,
+        (if(isChinese) "输入法与键盘" else "Keyboard & Input") to Settings.ACTION_INPUT_METHOD_SETTINGS,
+        (if(isChinese) "位置信息 / 定位" else "Location") to Settings.ACTION_LOCATION_SOURCE_SETTINGS,
+        (if(isChinese) "密码与安全 / 隐私" else "Security & Privacy") to Settings.ACTION_SECURITY_SETTINGS,
+        (if(isChinese) "生物识别 / 指纹面部" else "Biometrics") to Settings.ACTION_BIOMETRIC_ENROLL,
+        (if(isChinese) "锁屏与息屏" else "Lock Screen") to "android.settings.LOCK_SCREEN_SETTINGS",
+        (if(isChinese) "应用管理 / 列表" else "Apps") to Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS,
+        (if(isChinese) "默认应用设置" else "Default Apps") to Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
+        (if(isChinese) "通知管理 / 状态栏" else "Notifications") to Settings.ACTION_ALL_APPS_NOTIFICATION_SETTINGS,
+        (if(isChinese) "悬浮窗权限" else "Display Over Other Apps") to Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+        (if(isChinese) "未知来源安装" else "Install Unknown Apps") to Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+        (if(isChinese) "画中画权限" else "Picture-in-Picture") to "android.settings.PICTURE_IN_PICTURE_SETTINGS",
+        (if(isChinese) "后台运行 / 优化限制" else "Battery Optimization") to Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+        (if(isChinese) "存储空间 / 内存" else "Storage") to Settings.ACTION_INTERNAL_STORAGE_SETTINGS,
+        (if(isChinese) "账号与同步" else "Accounts & Sync") to Settings.ACTION_SYNC_SETTINGS,
+        (if(isChinese) "关于手机 / 设备信息" else "About Phone") to Settings.ACTION_DEVICE_INFO_SETTINGS,
+        (if(isChinese) "系统更新 / 软件升级" else "System Update") to "android.settings.SYSTEM_UPDATE_SETTINGS",
+        (if(isChinese) "开发者选项" else "Developer Options") to Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS,
+        (if(isChinese) "电池与省电" else "Battery Saver") to Settings.ACTION_BATTERY_SAVER_SETTINGS,
+        (if(isChinese) "耗电详情 / 电量" else "Battery Usage") to Intent.ACTION_POWER_USAGE_SUMMARY,
+        (if(isChinese) "无障碍 / 辅助功能" else "Accessibility") to Settings.ACTION_ACCESSIBILITY_SETTINGS,
+        (if(isChinese) "搜索设置" else "Search Settings") to Settings.ACTION_SEARCH_SETTINGS,
+        (if(isChinese) "勿扰模式" else "Do Not Disturb") to Settings.ACTION_ZEN_MODE_PRIORITY_SETTINGS,
+        (if(isChinese) "默认桌面 / 主屏幕" else "Home Screen") to Settings.ACTION_HOME_SETTINGS,
+        (if(isChinese) "单手操作模式" else "One-handed Mode") to "android.settings.action.ONE_HANDED_SETTINGS"
     )
 
     return settings.map { (name, action) ->
         val (initials, indices) = getSearchInitialsInfo(name)
-        SearchItem(name, "System Setting", initials, indices, action, SearchItemType.SYSTEM_ACTION)
+        SearchItem(name, "", initials, indices, action, SearchItemType.SYSTEM_ACTION)
     }
 }
 
@@ -257,9 +256,8 @@ fun getInstalledApps(context: Context): List<SearchItem> {
         val name = it.loadLabel(pm).toString()
         val pkg = it.activityInfo.packageName
         val type = if (pkg == "com.android.settings" || pkg.contains("settings", true)) SearchItemType.SETTINGS else SearchItemType.APP
-        val subtitle = if (type == SearchItemType.SETTINGS) "Setting" else "Application"
         val (initials, indices) = getSearchInitialsInfo(name)
-        SearchItem(name, subtitle, initials, indices, pkg, type)
+        SearchItem(name, "", initials, indices, pkg, type)
     }
 }
 
@@ -332,6 +330,16 @@ fun GestureSearchApp() {
 
     LaunchedEffect(searchQuery) { listState.scrollToItem(0) }
 
+    // --- 【新增：状态管理，语言控制】 ---
+    var languagePref by remember { mutableIntStateOf(prefs.getInt("app_language", 0)) } // 0:系统, 1:中文, 2:英文
+    val isChinese = remember(languagePref) {
+        when (languagePref) {
+            1 -> true
+            2 -> false
+            else -> Locale.getDefault().language == "zh"
+        }
+    }
+
     var searchAppsEnabled by remember { mutableStateOf(prefs.getBoolean("search_apps", true)) }
     var searchContactsEnabled by remember { mutableStateOf(prefs.getBoolean("search_contacts", true)) }
     var searchSettingsEnabled by remember { mutableStateOf(prefs.getBoolean("search_settings", true)) }
@@ -361,7 +369,9 @@ fun GestureSearchApp() {
 
     val allApps = remember { getInstalledApps(context) }
     val allContacts = remember(hasContactPermission) { if (hasContactPermission) getContacts(context) else emptyList() }
-    val allSystemSettings = remember { getSystemSettingsItems() }
+
+    // 系统设置列表现在会根据语言状态自动重载
+    val allSystemSettings = remember(isChinese) { getSystemSettingsItems(isChinese) }
 
     val allItems = remember(allApps, allContacts, allSystemSettings, searchAppsEnabled, searchContactsEnabled, searchSettingsEnabled) {
         val list = mutableListOf<SearchItem>()
@@ -374,43 +384,41 @@ fun GestureSearchApp() {
         list.sortedBy { it.title.lowercase() }
     }
 
-    // --- 【核心升级区：双轨裂变搜索与优先级梯队计算】 ---
     val filteredItems = remember(searchQuery, allItems) {
         if (searchQuery.isEmpty()) return@remember allItems
         val q = searchQuery.lowercase(Locale.getDefault())
-        val qNum = q.replace('z', '2') // 生成变体，用于降级匹配
+        val qFallback = q.replace('z', '2').replace('l', '1')
 
         allItems.mapNotNull { item ->
             val t = item.title.lowercase(Locale.getDefault())
             val i = item.initials
             val sub = item.subtitle.lowercase(Locale.getDefault())
 
-            val tIdxZ = t.indexOf(q)
-            val iIdxZ = i.indexOf(q)
+            val tIdxPrimary = t.indexOf(q)
+            val iIdxPrimary = i.indexOf(q)
 
-            val tIdxNum = if (q != qNum) t.indexOf(qNum) else -1
-            val iIdxNum = if (q != qNum) i.indexOf(qNum) else -1
+            val tIdxFallback = if (q != qFallback) t.indexOf(qFallback) else -1
+            val iIdxFallback = if (q != qFallback) i.indexOf(qFallback) else -1
 
-            val subIdxZ = if (item.type == SearchItemType.CONTACT) sub.indexOf(q) else -1
-            val subIdxNum = if (item.type == SearchItemType.CONTACT && q != qNum) sub.indexOf(qNum) else -1
+            val subIdxPrimary = if (item.type == SearchItemType.CONTACT) sub.indexOf(q) else -1
+            val subIdxFallback = if (item.type == SearchItemType.CONTACT && q != qFallback) sub.indexOf(qFallback) else -1
 
-            val isMatchZ = tIdxZ != -1 || iIdxZ != -1
-            val isMatchNum = tIdxNum != -1 || iIdxNum != -1
-            val isMatchSubZ = subIdxZ != -1
-            val isMatchSubNum = subIdxNum != -1
+            val isMatchPrimary = tIdxPrimary != -1 || iIdxPrimary != -1
+            val isMatchFallback = tIdxFallback != -1 || iIdxFallback != -1
+            val isMatchSubPrimary = subIdxPrimary != -1
+            val isMatchSubFallback = subIdxFallback != -1
 
-            if (isMatchZ || isMatchNum || isMatchSubZ || isMatchSubNum) {
+            if (isMatchPrimary || isMatchFallback || isMatchSubPrimary || isMatchSubFallback) {
                 var baseScore = 0
                 var effectiveIdx = -1
                 var matchedLength = 1
                 var targetLen = t.length
 
-                // 梯队 1: 标题含 Z (最高优)
-                if (isMatchZ) {
+                if (isMatchPrimary) {
                     effectiveIdx = when {
-                        iIdxZ != -1 && tIdxZ != -1 -> minOf(iIdxZ, tIdxZ)
-                        iIdxZ != -1 -> iIdxZ
-                        else -> tIdxZ
+                        iIdxPrimary != -1 && tIdxPrimary != -1 -> minOf(iIdxPrimary, tIdxPrimary)
+                        iIdxPrimary != -1 -> iIdxPrimary
+                        else -> tIdxPrimary
                     }
                     if (t == q || (i == q && t.length == q.length)) baseScore = 100000
                     else if (t.startsWith("$q ") || t.startsWith("$q(") || t.startsWith("$q-") || t.startsWith("${q}（")) baseScore = 90000
@@ -418,26 +426,22 @@ fun GestureSearchApp() {
                     else baseScore = 40000
                     matchedLength = q.length
                 }
-                // 梯队 2: 标题含 2 (降级匹配)
-                else if (isMatchNum) {
+                else if (isMatchFallback) {
                     effectiveIdx = when {
-                        iIdxNum != -1 && tIdxNum != -1 -> minOf(iIdxNum, tIdxNum)
-                        iIdxNum != -1 -> iIdxNum
-                        else -> tIdxNum
+                        iIdxFallback != -1 && tIdxFallback != -1 -> minOf(iIdxFallback, tIdxFallback)
+                        iIdxFallback != -1 -> iIdxFallback
+                        else -> tIdxFallback
                     }
-                    // 分数低于原生 Z，确保 Z 优先于 2
-                    if (t == qNum || (i == qNum && t.length == qNum.length)) baseScore = 95000
-                    else if (t.startsWith("$qNum ") || t.startsWith("$qNum(") || t.startsWith("$qNum-") || t.startsWith("${qNum}（")) baseScore = 85000
+                    if (t == qFallback || (i == qFallback && t.length == qFallback.length)) baseScore = 95000
+                    else if (t.startsWith("$qFallback ") || t.startsWith("$qFallback(") || t.startsWith("$qFallback-") || t.startsWith("${qFallback}（")) baseScore = 85000
                     else if (effectiveIdx == 0) baseScore = 65000
                     else baseScore = 35000
-                    matchedLength = qNum.length
+                    matchedLength = qFallback.length
                 }
-                // 梯队 3 & 4: 穿透到副标题(手机号码)匹配
-                else if (isMatchSubZ || isMatchSubNum) {
-                    effectiveIdx = if (isMatchSubZ) subIdxZ else subIdxNum
-                    // 手机号匹配得分远低于标题，且 Z 优先于 2
-                    baseScore = if (isMatchSubZ) 20000 else 15000
-                    matchedLength = if (isMatchSubZ) q.length else qNum.length
+                else if (isMatchSubPrimary || isMatchSubFallback) {
+                    effectiveIdx = if (isMatchSubPrimary) subIdxPrimary else subIdxFallback
+                    baseScore = if (isMatchSubPrimary) 20000 else 15000
+                    matchedLength = if (isMatchSubPrimary) q.length else qFallback.length
                     targetLen = sub.length
                 }
 
@@ -486,7 +490,7 @@ fun GestureSearchApp() {
             containerColor = Color(0xFF121212),
             topBar = {
                 CenterAlignedTopAppBar(
-                    title = { Text("设置", fontWeight = FontWeight.Bold, color = Color.White) },
+                    title = { Text(if (isChinese) "设置" else "Settings", fontWeight = FontWeight.Bold, color = Color.White) },
                     navigationIcon = { IconButton(onClick = { showSettings = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) } },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color(0xFF121212))
                 )
@@ -496,23 +500,47 @@ fun GestureSearchApp() {
                 modifier = Modifier.padding(innerPadding).fillMaxSize()
             ) {
                 LazyColumn(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
+                    // --- 语言设置 ---
                     item {
-                        Text(text = "搜索范围", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp))
+                        Text(text = if (isChinese) "语言 / Language" else "Language", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp))
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
-                            Column {
-                                SettingM3Row("联系人", Icons.Default.Phone, searchContactsEnabled) { searchContactsEnabled = it; prefs.edit { putBoolean("search_contacts", it) } }
-                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
-                                SettingM3Row("应用软件", Icons.Default.Face, searchAppsEnabled) { searchAppsEnabled = it; prefs.edit { putBoolean("search_apps", it) } }
-                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
-                                SettingM3Row("系统设置", Icons.Default.Settings, searchSettingsEnabled) { searchSettingsEnabled = it; prefs.edit { putBoolean("search_settings", it) } }
+                            Column(Modifier.selectableGroup()) {
+                                val langOptions = listOf((if (isChinese) "跟随系统" else "System Default") to 0, "中文" to 1, "English" to 2)
+                                langOptions.forEach { option ->
+                                    Row(Modifier.fillMaxWidth().height(56.dp).selectable(selected = (languagePref == option.second), onClick = { languagePref = option.second; prefs.edit { putInt("app_language", option.second) } }, role = Role.RadioButton).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        RadioButton(selected = (languagePref == option.second), onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00BCD4)))
+                                        Text(text = option.first, color = Color.White, modifier = Modifier.padding(start = 16.dp))
+                                    }
+                                    if (option != langOptions.last()) HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
+                                }
                             }
                         }
                     }
+
+                    // --- 搜索范围 ---
                     item {
-                        Text(text = "写入速度", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 24.dp, bottom = 8.dp))
+                        Text(text = if (isChinese) "搜索范围" else "Search Scope", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 24.dp, bottom = 8.dp))
+                        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
+                            Column {
+                                SettingM3Row(if (isChinese) "联系人" else "Contacts", Icons.Default.Phone, searchContactsEnabled) { searchContactsEnabled = it; prefs.edit { putBoolean("search_contacts", it) } }
+                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
+                                SettingM3Row(if (isChinese) "应用软件" else "Applications", Icons.Default.Face, searchAppsEnabled) { searchAppsEnabled = it; prefs.edit { putBoolean("search_apps", it) } }
+                                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
+                                SettingM3Row(if (isChinese) "系统设置" else "System Settings", Icons.Default.Settings, searchSettingsEnabled) { searchSettingsEnabled = it; prefs.edit { putBoolean("search_settings", it) } }
+                            }
+                        }
+                    }
+
+                    // --- 写入速度 ---
+                    item {
+                        Text(text = if (isChinese) "写入速度" else "Writing Speed", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 24.dp, bottom = 8.dp))
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
                             Column(Modifier.selectableGroup()) {
-                                val speedOptions = listOf("快 (300ms)" to 300L, "中等 (500ms)" to 500L, "慢 (800ms)" to 800L)
+                                val speedOptions = listOf(
+                                    (if (isChinese) "快 (300ms)" else "Fast (300ms)") to 300L,
+                                    (if (isChinese) "中等 (500ms)" else "Medium (500ms)") to 500L,
+                                    (if (isChinese) "慢 (800ms)" else "Slow (800ms)") to 800L
+                                )
                                 speedOptions.forEach { option ->
                                     Row(Modifier.fillMaxWidth().height(56.dp).selectable(selected = (writingSpeedDelay == option.second), onClick = { writingSpeedDelay = option.second; prefs.edit { putLong("writing_delay", option.second) } }, role = Role.RadioButton).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                                         RadioButton(selected = (writingSpeedDelay == option.second), onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00BCD4)))
@@ -618,8 +646,14 @@ fun GestureSearchApp() {
                                     Spacer(Modifier.width(16.dp))
                                     Column {
                                         HighlightedText(item.title, searchQuery, item.initials, item.initialIndices)
-                                        // 手机号码(或副标题)应用新的高亮组件
-                                        HighlightedSubtitle(item.subtitle, searchQuery)
+
+                                        // 动态匹配副标题语言
+                                        val displaySubtitle = when (item.type) {
+                                            SearchItemType.APP -> if (isChinese) "应用软件" else "Application"
+                                            SearchItemType.SETTINGS, SearchItemType.SYSTEM_ACTION -> if (isChinese) "系统设置" else "System Settings"
+                                            SearchItemType.CONTACT -> item.subtitle // 联系人展示号码，不翻译
+                                        }
+                                        HighlightedSubtitle(displaySubtitle, searchQuery)
                                     }
                                 }
                             }
@@ -641,7 +675,8 @@ fun GestureSearchApp() {
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "画一个字符开始搜索！",
+                            // 主屏幕的双语提示词
+                            text = if (isChinese) "画一个字符开始搜索！" else "Draw a character to search!",
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF1E1E1E),
@@ -723,13 +758,12 @@ fun GestureSearchApp() {
                                         if (finalInk.strokes.isNotEmpty()) {
                                             recognizer.recognize(finalInk).addOnSuccessListener { result ->
 
-                                                // --- 【核心升级区：ML Kit 结果截获与强转】 ---
                                                 val candidates = result.candidates.take(10).mapNotNull {
                                                     val tStr = it.text.trim()
                                                     if (tStr.isNotEmpty() && tStr.first().isLetterOrDigit()) {
                                                         var char = tStr.first().toString().lowercase()
-                                                        // “降维打击”：只要 AI 觉得是 2，我们按着它的头让它变成 z
                                                         if (char == "2") char = "z"
+                                                        if (char == "1") char = "l"
                                                         char
                                                     } else null
                                                 }.distinct()
@@ -738,17 +772,16 @@ fun GestureSearchApp() {
                                                     var bestChar: String? = null
                                                     for (char in candidates) {
                                                         val testQuery = searchQuery + char
-                                                        val testQueryNum = testQuery.replace('z', '2') // 模拟裂变验证
+                                                        val testQueryFallback = testQuery.replace('z', '2').replace('l', '1')
 
-                                                        // 验证裂变结果是否有货，以此决定是否采纳这个按键
                                                         val hasMatch = filteredItems.any { item ->
                                                             val t = item.title.lowercase()
                                                             val i = item.initials
-                                                            val sub = item.subtitle.lowercase()
+                                                            val sub = item.subtitle.lowercase() // 这里匹配真实的固定文字
 
                                                             t.contains(testQuery) || i.contains(testQuery) ||
-                                                                    t.contains(testQueryNum) || i.contains(testQueryNum) ||
-                                                                    (item.type == SearchItemType.CONTACT && (sub.contains(testQuery) || sub.contains(testQueryNum)))
+                                                                    t.contains(testQueryFallback) || i.contains(testQueryFallback) ||
+                                                                    (item.type == SearchItemType.CONTACT && (sub.contains(testQuery) || sub.contains(testQueryFallback)))
                                                         }
                                                         if (hasMatch) {
                                                             bestChar = char

@@ -1,10 +1,10 @@
-<img alt="logobeta.png" height="200" src="app/src/main/res/drawable/logobeta.png" width="200"/>
+![logobeta.png](app/src/main/res/drawable/logobeta.png)
 
 一款基于手势的本地搜索软件。使用手势搜索联系人，设置，软件。无需联网权限，放心食用。
 
 最低安装要求：Android 14 (API 34)，原生 64 位 (arm64-v8a)
 
-<img alt="logobeta.png" height="600" src="app/src/main/res/drawable/gesture_guide.png" />
+![gesture_guide.png](app/src/main/res/drawable/gesture_guide.png)
 
 
 # 关于f和t识别错误的问题
