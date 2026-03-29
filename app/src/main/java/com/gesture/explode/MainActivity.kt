@@ -86,8 +86,8 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【升级为 88：引入中英文双语动态支持】 ---
-const val BUILD_VERSION = 88
+// --- 【升级为 89：移除手动语言切换，全面拥抱系统自适应语言】 ---
+const val BUILD_VERSION = 89
 
 enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
@@ -197,7 +197,6 @@ fun HighlightedSubtitle(text: String, query: String) {
     Text(text = annotatedString, fontSize = 12.sp)
 }
 
-// 核心升级：系统设置名称全面实现双语映射
 @SuppressLint("InlinedApi")
 fun getSystemSettingsItems(isChinese: Boolean): List<SearchItem> {
     val settings = listOf(
@@ -330,15 +329,8 @@ fun GestureSearchApp() {
 
     LaunchedEffect(searchQuery) { listState.scrollToItem(0) }
 
-    // --- 【新增：状态管理，语言控制】 ---
-    var languagePref by remember { mutableIntStateOf(prefs.getInt("app_language", 0)) } // 0:系统, 1:中文, 2:英文
-    val isChinese = remember(languagePref) {
-        when (languagePref) {
-            1 -> true
-            2 -> false
-            else -> Locale.getDefault().language == "zh"
-        }
-    }
+    // --- 【直接读取系统语言环境，极简优雅】 ---
+    val isChinese = Locale.getDefault().language == "zh"
 
     var searchAppsEnabled by remember { mutableStateOf(prefs.getBoolean("search_apps", true)) }
     var searchContactsEnabled by remember { mutableStateOf(prefs.getBoolean("search_contacts", true)) }
@@ -369,8 +361,6 @@ fun GestureSearchApp() {
 
     val allApps = remember { getInstalledApps(context) }
     val allContacts = remember(hasContactPermission) { if (hasContactPermission) getContacts(context) else emptyList() }
-
-    // 系统设置列表现在会根据语言状态自动重载
     val allSystemSettings = remember(isChinese) { getSystemSettingsItems(isChinese) }
 
     val allItems = remember(allApps, allContacts, allSystemSettings, searchAppsEnabled, searchContactsEnabled, searchSettingsEnabled) {
@@ -500,26 +490,9 @@ fun GestureSearchApp() {
                 modifier = Modifier.padding(innerPadding).fillMaxSize()
             ) {
                 LazyColumn(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
-                    // --- 语言设置 ---
+                    // --- 删除了手动语言选择，直接进入搜索范围设置 ---
                     item {
-                        Text(text = if (isChinese) "语言 / Language" else "Language", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp))
-                        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
-                            Column(Modifier.selectableGroup()) {
-                                val langOptions = listOf((if (isChinese) "跟随系统" else "System Default") to 0, "中文" to 1, "English" to 2)
-                                langOptions.forEach { option ->
-                                    Row(Modifier.fillMaxWidth().height(56.dp).selectable(selected = (languagePref == option.second), onClick = { languagePref = option.second; prefs.edit { putInt("app_language", option.second) } }, role = Role.RadioButton).padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        RadioButton(selected = (languagePref == option.second), onClick = null, colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF00BCD4)))
-                                        Text(text = option.first, color = Color.White, modifier = Modifier.padding(start = 16.dp))
-                                    }
-                                    if (option != langOptions.last()) HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = Color.White.copy(alpha = 0.05f))
-                                }
-                            }
-                        }
-                    }
-
-                    // --- 搜索范围 ---
-                    item {
-                        Text(text = if (isChinese) "搜索范围" else "Search Scope", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 24.dp, bottom = 8.dp))
+                        Text(text = if (isChinese) "搜索范围" else "Search Scope", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp))
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
                             Column {
                                 SettingM3Row(if (isChinese) "联系人" else "Contacts", Icons.Default.Phone, searchContactsEnabled) { searchContactsEnabled = it; prefs.edit { putBoolean("search_contacts", it) } }
@@ -531,7 +504,6 @@ fun GestureSearchApp() {
                         }
                     }
 
-                    // --- 写入速度 ---
                     item {
                         Text(text = if (isChinese) "写入速度" else "Writing Speed", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 24.dp, bottom = 8.dp))
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
@@ -647,11 +619,10 @@ fun GestureSearchApp() {
                                     Column {
                                         HighlightedText(item.title, searchQuery, item.initials, item.initialIndices)
 
-                                        // 动态匹配副标题语言
                                         val displaySubtitle = when (item.type) {
                                             SearchItemType.APP -> if (isChinese) "应用软件" else "Application"
                                             SearchItemType.SETTINGS, SearchItemType.SYSTEM_ACTION -> if (isChinese) "系统设置" else "System Settings"
-                                            SearchItemType.CONTACT -> item.subtitle // 联系人展示号码，不翻译
+                                            SearchItemType.CONTACT -> item.subtitle
                                         }
                                         HighlightedSubtitle(displaySubtitle, searchQuery)
                                     }
@@ -675,7 +646,6 @@ fun GestureSearchApp() {
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            // 主屏幕的双语提示词
                             text = if (isChinese) "画一个字符开始搜索！" else "Draw a character to search!",
                             fontSize = 22.sp,
                             fontWeight = FontWeight.Bold,
@@ -777,7 +747,7 @@ fun GestureSearchApp() {
                                                         val hasMatch = filteredItems.any { item ->
                                                             val t = item.title.lowercase()
                                                             val i = item.initials
-                                                            val sub = item.subtitle.lowercase() // 这里匹配真实的固定文字
+                                                            val sub = item.subtitle.lowercase()
 
                                                             t.contains(testQuery) || i.contains(testQuery) ||
                                                                     t.contains(testQueryFallback) || i.contains(testQueryFallback) ||
