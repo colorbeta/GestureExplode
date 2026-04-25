@@ -14,8 +14,8 @@ android {
         // 回退到 34
         targetSdk = 34
         //内部测试版本号
-        versionCode = 260325
-        versionName = "1.5"
+        versionCode = 260425
+        versionName = "1.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

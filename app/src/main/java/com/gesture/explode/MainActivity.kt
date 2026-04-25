@@ -86,8 +86,8 @@ import net.sourceforge.pinyin4j.PinyinHelper
 import java.util.Locale
 import kotlin.math.abs
 
-// --- 【升级为 89：移除手动语言切换，全面拥抱系统自适应语言】 ---
-const val BUILD_VERSION = 89
+// --- 【升级为 90：后台异步加载，解除主线程死锁，画板手势防中断重构】 ---
+const val BUILD_VERSION = 90
 
 enum class SearchItemType { APP, CONTACT, SETTINGS, SYSTEM_ACTION }
 
@@ -329,7 +329,6 @@ fun GestureSearchApp() {
 
     LaunchedEffect(searchQuery) { listState.scrollToItem(0) }
 
-    // --- 【直接读取系统语言环境，极简优雅】 ---
     val isChinese = Locale.getDefault().language == "zh"
 
     var searchAppsEnabled by remember { mutableStateOf(prefs.getBoolean("search_apps", true)) }
@@ -359,9 +358,26 @@ fun GestureSearchApp() {
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { hasContactPermission = it }
     LaunchedEffect(Unit) { if (!hasContactPermission) permissionLauncher.launch(Manifest.permission.READ_CONTACTS) }
 
-    val allApps = remember { getInstalledApps(context) }
-    val allContacts = remember(hasContactPermission) { if (hasContactPermission) getContacts(context) else emptyList() }
+    // --- 【重构 1：将阻塞主线程的 IO 脏活全部扔进后台协程，确保秒开】 ---
+    var allApps by remember { mutableStateOf<List<SearchItem>>(emptyList()) }
+    var allContacts by remember { mutableStateOf<List<SearchItem>>(emptyList()) }
     val allSystemSettings = remember(isChinese) { getSystemSettingsItems(isChinese) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            allApps = getInstalledApps(context)
+        }
+    }
+
+    LaunchedEffect(hasContactPermission) {
+        if (hasContactPermission) {
+            withContext(Dispatchers.IO) {
+                allContacts = getContacts(context)
+            }
+        } else {
+            allContacts = emptyList()
+        }
+    }
 
     val allItems = remember(allApps, allContacts, allSystemSettings, searchAppsEnabled, searchContactsEnabled, searchSettingsEnabled) {
         val list = mutableListOf<SearchItem>()
@@ -475,6 +491,9 @@ fun GestureSearchApp() {
         } catch (_: Exception) { }
     }
 
+    // --- 【重构 2：创建动态快照，解绑画板状态依赖】 ---
+    val currentFilteredItems by rememberUpdatedState(filteredItems)
+
     if (showSettings) {
         Scaffold(
             containerColor = Color(0xFF121212),
@@ -490,7 +509,6 @@ fun GestureSearchApp() {
                 modifier = Modifier.padding(innerPadding).fillMaxSize()
             ) {
                 LazyColumn(modifier = Modifier.weight(1f).padding(horizontal = 16.dp)) {
-                    // --- 删除了手动语言选择，直接进入搜索范围设置 ---
                     item {
                         Text(text = if (isChinese) "搜索范围" else "Search Scope", style = MaterialTheme.typography.labelLarge, color = Color(0xFF00BCD4), modifier = Modifier.padding(start = 8.dp, top = 16.dp, bottom = 8.dp))
                         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), shape = RoundedCornerShape(24.dp)) {
@@ -670,21 +688,22 @@ fun GestureSearchApp() {
                     Box(modifier = Modifier
                         .weight(0.70f)
                         .fillMaxHeight()
-                        .pointerInput(isReady, filteredItems) {
+                        .pointerInput(Unit, currentFilteredItems) { // 保留对列表点击的监听
                             detectTapGestures { offset ->
                                 if (searchQuery.isNotEmpty()) {
                                     val tappedItem = listState.layoutInfo.visibleItemsInfo.find { itemInfo ->
                                         offset.y.toInt() in itemInfo.offset until (itemInfo.offset + itemInfo.size)
                                     }
                                     tappedItem?.let { itemInfo ->
-                                        if (itemInfo.index in filteredItems.indices) {
-                                            onItemClick(filteredItems[itemInfo.index])
+                                        if (itemInfo.index in currentFilteredItems.indices) {
+                                            onItemClick(currentFilteredItems[itemInfo.index])
                                         }
                                     }
                                 }
                             }
                         }
-                        .pointerInput(isReady) {
+                        // --- 【重构 3：去除 isReady 依赖，改为 Unit，即使系统在疯狂加载资源，你的手指轨迹也绝对不会被打断清空！】 ---
+                        .pointerInput(Unit) {
                             detectDragGestures(
                                 onDragStart = { offset ->
                                     recognizeJob?.cancel()
@@ -744,7 +763,8 @@ fun GestureSearchApp() {
                                                         val testQuery = searchQuery + char
                                                         val testQueryFallback = testQuery.replace('z', '2').replace('l', '1')
 
-                                                        val hasMatch = filteredItems.any { item ->
+                                                        // 闭包内强制使用最新的状态快照 currentFilteredItems
+                                                        val hasMatch = currentFilteredItems.any { item ->
                                                             val t = item.title.lowercase()
                                                             val i = item.initials
                                                             val sub = item.subtitle.lowercase()
